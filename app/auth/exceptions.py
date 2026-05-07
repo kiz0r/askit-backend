@@ -1,15 +1,24 @@
-from typing import Any, Dict, Optional
+"""Authentication and authorization exceptions."""
+
 from fastapi import status
-from app.core.exceptions import AppException
+
+from app.core.exceptions import AppException, ErrorDetails
 
 
-# Authentication Errors
+# =============================================================================
+# Authentication Errors (401)
+# =============================================================================
+
+
 class AuthenticationError(AppException):
     """Base authentication error."""
 
     def __init__(
-        self, error_code: str, message: str, details: Optional[Dict[str, Any]] = None
-    ):
+        self,
+        error_code: str,
+        message: str,
+        details: ErrorDetails | None = None,
+    ) -> None:
         super().__init__(
             error_code=error_code,
             message=message,
@@ -23,7 +32,8 @@ class InvalidCredentialsError(AuthenticationError):
 
     def __init__(self) -> None:
         super().__init__(
-            error_code="INVALID_CREDENTIALS", message="Invalid email or password"
+            error_code="INVALID_CREDENTIALS",
+            message="Invalid email or password",
         )
 
 
@@ -32,7 +42,8 @@ class TokenExpiredError(AuthenticationError):
 
     def __init__(self) -> None:
         super().__init__(
-            error_code="TOKEN_EXPIRED", message="Authentication token has expired"
+            error_code="TOKEN_EXPIRED",
+            message="Authentication token has expired",
         )
 
 
@@ -41,7 +52,8 @@ class InvalidTokenError(AuthenticationError):
 
     def __init__(self) -> None:
         super().__init__(
-            error_code="INVALID_TOKEN", message="Invalid authentication token"
+            error_code="INVALID_TOKEN",
+            message="Invalid authentication token",
         )
 
 
@@ -50,7 +62,8 @@ class NotAuthenticatedError(AuthenticationError):
 
     def __init__(self) -> None:
         super().__init__(
-            error_code="NOT_AUTHENTICATED", message="Authentication required"
+            error_code="NOT_AUTHENTICATED",
+            message="Authentication required",
         )
 
 
@@ -59,17 +72,25 @@ class RefreshTokenMissingError(AuthenticationError):
 
     def __init__(self) -> None:
         super().__init__(
-            error_code="REFRESH_TOKEN_MISSING", message="Refresh token is required"
+            error_code="REFRESH_TOKEN_MISSING",
+            message="Refresh token is required",
         )
 
 
-# Authorization Errors
+# =============================================================================
+# Authorization Errors (403)
+# =============================================================================
+
+
 class AuthorizationError(AppException):
     """Base authorization error."""
 
     def __init__(
-        self, error_code: str, message: str, details: Optional[Dict[str, Any]] = None
-    ):
+        self,
+        error_code: str,
+        message: str,
+        details: ErrorDetails | None = None,
+    ) -> None:
         super().__init__(
             error_code=error_code,
             message=message,
@@ -82,26 +103,36 @@ class UserInactiveError(AuthorizationError):
     """User account is inactive."""
 
     def __init__(self) -> None:
-        super().__init__(error_code="USER_INACTIVE", message="User account is inactive")
+        super().__init__(
+            error_code="USER_INACTIVE",
+            message="User account is inactive",
+        )
 
 
 class InsufficientPermissionsError(AuthorizationError):
     """User doesn't have permission."""
 
-    def __init__(self, resource: str = "resource"):
+    def __init__(self, resource: str = "resource") -> None:
         super().__init__(
             error_code="INSUFFICIENT_PERMISSIONS",
             message=f"You don't have permission to access this {resource}",
         )
 
 
-# Validation Errors
-class ValidationError(AppException):
-    """Base validation error."""
+# =============================================================================
+# Validation Errors (422)
+# =============================================================================
+
+
+class AuthValidationError(AppException):
+    """Base validation error for auth-related input."""
 
     def __init__(
-        self, error_code: str, message: str, details: Optional[Dict[str, Any]] = None
-    ):
+        self,
+        error_code: str,
+        message: str,
+        details: ErrorDetails | None = None,
+    ) -> None:
         super().__init__(
             error_code=error_code,
             message=message,
@@ -110,31 +141,38 @@ class ValidationError(AppException):
         )
 
 
-class InvalidUsernameError(ValidationError):
+class InvalidUsernameError(AuthValidationError):
     """Invalid username format."""
 
     def __init__(
         self,
         message: str = "Username must be 3-30 characters, letters, numbers, and underscores only",
-    ):
+    ) -> None:
         super().__init__(error_code="INVALID_USERNAME", message=message)
 
 
-class InvalidPasswordError(ValidationError):
+class InvalidPasswordError(AuthValidationError):
     """Invalid password format."""
 
-    def __init__(self, message: str):
+    def __init__(self, message: str) -> None:
         super().__init__(error_code="INVALID_PASSWORD", message=message)
 
 
-class InvalidEmailError(ValidationError):
+class InvalidEmailError(AuthValidationError):
     """Invalid email format."""
 
     def __init__(self) -> None:
-        super().__init__(error_code="INVALID_EMAIL", message="Invalid email format")
+        super().__init__(
+            error_code="INVALID_EMAIL",
+            message="Invalid email format",
+        )
 
 
-# User Resource Errors
+# =============================================================================
+# Resource Conflicts (409)
+# =============================================================================
+
+
 class UserAlreadyExistsError(AppException):
     """User with this email already exists."""
 

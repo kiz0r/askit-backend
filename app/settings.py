@@ -26,7 +26,24 @@ class Settings(BaseSettings):
     POSTGRES_HOST: str = Field(..., min_length=3)
     POSTGRES_PORT: int = 5432
 
+    # Redis Settings
+    REDIS_HOST: str = Field(default="redis")
+    REDIS_PORT: int = Field(default=6379)
+
     model_config = SettingsConfigDict(env_file=".env")
+
+    @property
+    def database_url(self) -> str:
+        """Build PostgreSQL async database URL."""
+        return (
+            f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
+
+    @property
+    def redis_url(self) -> str:
+        """Build Redis URL."""
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}"
 
     @property
     def cors_origins_list(self) -> list[str]:
