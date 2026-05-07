@@ -14,6 +14,10 @@ RUN uv sync --frozen --no-dev
 # Copy application code
 COPY ./app ./app
 
+# Copy alembic configuration
+COPY alembic.ini ./
+COPY ./alembic ./alembic
+
 # Set Python path
 ENV PYTHONPATH=/app
 

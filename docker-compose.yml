@@ -11,6 +11,16 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./scripts/create_test_db.sh:/docker-entrypoint-initdb.d/create_test_db.sh
+
+  redis:
+    image: redis:7-alpine
+    container_name: askit_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
 
   adminer:
     image: adminer
@@ -28,8 +38,10 @@ services:
       - .env
     depends_on:
       - askit_db
+      - redis
     volumes:
       - .:/app
 
 volumes:
   postgres_data:
+  redis_data:

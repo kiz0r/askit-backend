@@ -1,9 +1,12 @@
+"""Quiz module schemas for API requests and responses."""
+
 from datetime import datetime
-from pydantic import BaseModel, Field, ConfigDict, field_validator
-from typing import List, Optional
 from enum import Enum
-from app.quiz.types import QuizId, QuestionId, AnswerId
-from app.quiz.exceptions import InvalidQuizDataError
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .exceptions import InvalidQuizDataError
+from .types import AnswerId, QuestionId, QuizId
 
 # Validation constants
 MAX_TITLE_LENGTH = 50
@@ -11,18 +14,29 @@ MAX_DESCRIPTION_LENGTH = 300
 MAX_TAG_LENGTH = 30
 MAX_TAGS_PER_QUIZ = 5
 
-# Constants
+# Settings defaults
 DEFAULT_MAX_PARTICIPANTS = 5
 MAX_PARTICIPANTS_LIMIT = 30
-DEFAULT_TIME_PER_QUESTION_MS = 30000  # Default time per question in milliseconds
+DEFAULT_TIME_PER_QUESTION_MS = 30_000  # milliseconds
 
 
 class QuizVisibility(str, Enum):
+    """Quiz visibility options."""
+
     private = "private"
     public = "public"
 
 
+class QuizStatus(str, Enum):
+    """Quiz lifecycle status."""
+
+    draft = "draft"
+    published = "published"
+
+
 class QuizAnswerCreate(BaseModel):
+    """Schema for creating a quiz answer."""
+
     text: str
     is_correct: bool = Field(
         default=False, serialization_alias="isCorrect", validation_alias="isCorrect"
@@ -41,22 +55,12 @@ class QuizQuestionCreate(BaseModel):
         validation_alias="timeLimit",
         description="Time limit for this question in milliseconds",
     )
-    is_hidden: bool = Field(
-        default=False,
-        serialization_alias="isHidden",
-        validation_alias="isHidden",
-    )
-    answers: List[QuizAnswerCreate]
+    answers: list[QuizAnswerCreate]
 
     model_config = ConfigDict(populate_by_name=True)
 
 
 class QuizSettingsCreate(BaseModel):
-    randomize_answers: bool = Field(
-        default=False,
-        serialization_alias="randomizeAnswers",
-        validation_alias="randomizeAnswers",
-    )
     default_time_per_question: int = Field(
         default=DEFAULT_TIME_PER_QUESTION_MS,
         serialization_alias="defaultTimePerQuestion",
@@ -77,10 +81,10 @@ class QuizSettingsCreate(BaseModel):
 
 class QuizCreate(BaseModel):
     title: str
-    description: Optional[str] = None
-    tags: List[str] = Field(default_factory=list)
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
     settings: QuizSettingsCreate
-    questions: List[QuizQuestionCreate]
+    questions: list[QuizQuestionCreate]
 
     @field_validator("title")
     @classmethod
@@ -95,7 +99,7 @@ class QuizCreate(BaseModel):
 
     @field_validator("description")
     @classmethod
-    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+    def validate_description(cls, v: str | None) -> str | None:
         if v is None:
             return None
         if len(v) > MAX_DESCRIPTION_LENGTH:
@@ -106,7 +110,7 @@ class QuizCreate(BaseModel):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: List[str]) -> List[str]:
+    def validate_tags(cls, v: list[str]) -> list[str]:
         validated = []
         for tag in v:
             tag = tag.strip().lower()
@@ -121,15 +125,15 @@ class QuizCreate(BaseModel):
 
 
 class QuizUpdate(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    tags: Optional[List[str]] = None
-    settings: Optional[QuizSettingsCreate] = None
-    questions: Optional[List[QuizQuestionCreate]] = None
+    title: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+    settings: QuizSettingsCreate | None = None
+    questions: list[QuizQuestionCreate] | None = None
 
     @field_validator("title")
     @classmethod
-    def validate_title(cls, v: Optional[str]) -> Optional[str]:
+    def validate_title(cls, v: str | None) -> str | None:
         if v is None:
             return None
         if not v.strip():
@@ -142,7 +146,7 @@ class QuizUpdate(BaseModel):
 
     @field_validator("description")
     @classmethod
-    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+    def validate_description(cls, v: str | None) -> str | None:
         if v is None:
             return None
         if len(v) > MAX_DESCRIPTION_LENGTH:
@@ -153,7 +157,7 @@ class QuizUpdate(BaseModel):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+    def validate_tags(cls, v: list[str] | None) -> list[str] | None:
         if v is None:
             return None
         validated = []
@@ -182,14 +186,12 @@ class QuizQuestionOut(BaseModel):
     text: str
     position: int
     time_limit: int = Field(serialization_alias="timeLimit")
-    is_hidden: bool = Field(serialization_alias="isHidden")
-    answers: List[QuizAnswerOut]
+    answers: list[QuizAnswerOut]
 
     model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 
 
 class QuizSettingsOut(BaseModel):
-    randomize_answers: bool = Field(serialization_alias="randomizeAnswers")
     default_time_per_question: int = Field(serialization_alias="defaultTimePerQuestion")
     visibility: QuizVisibility
     max_participants: int = Field(serialization_alias="maxParticipants")
@@ -199,14 +201,16 @@ class QuizSettingsOut(BaseModel):
 
 class QuizOut(BaseModel):
     quiz_id: QuizId = Field(serialization_alias="quizId")
+    creator_id: str = Field(serialization_alias="creatorId")
     title: str
-    description: Optional[str] = None
-    tags: List[str] = Field(default_factory=list)
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    status: QuizStatus
     settings: QuizSettingsOut
-    questions: List[QuizQuestionOut]
+    questions: list[QuizQuestionOut]
     estimated_time: int = Field(
         serialization_alias="estimatedTime",
-        description="Estimated time to complete the quiz in milliseconds (sum of non-hidden questions)",
+        description="Estimated time to complete the quiz in milliseconds",
     )
     created_at: datetime = Field(serialization_alias="createdAt")
     updated_at: datetime = Field(serialization_alias="updatedAt")
@@ -215,4 +219,30 @@ class QuizOut(BaseModel):
 
 
 class QuizListOut(BaseModel):
-    items: List[QuizOut]
+    items: list[QuizOut]
+
+
+class FavoriteActionResponse(BaseModel):
+    quiz_id: str = Field(serialization_alias="quizId")
+    is_favorited: bool = Field(serialization_alias="isFavorited")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class TopPlayerOut(BaseModel):
+    nickname: str
+    score: int
+    played_at: datetime = Field(serialization_alias="playedAt")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class QuizStatsOut(BaseModel):
+    quiz_id: str = Field(serialization_alias="quizId")
+    times_played: int = Field(serialization_alias="timesPlayed")
+    total_players: int = Field(serialization_alias="totalPlayers")
+    average_score: int = Field(serialization_alias="averageScore")
+    average_duration_seconds: int = Field(serialization_alias="averageDurationSeconds")
+    top_players: list[TopPlayerOut] = Field(serialization_alias="topPlayers")
+
+    model_config = ConfigDict(populate_by_name=True)

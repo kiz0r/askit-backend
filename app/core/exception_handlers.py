@@ -1,8 +1,10 @@
 import structlog
 from fastapi import Request, status
-from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from slowapi.errors import RateLimitExceeded
+
 from app.core.exceptions import AppException
 
 logger = structlog.get_logger(__name__)
@@ -29,15 +31,24 @@ async def validation_exception_handler(
 
     Converts Pydantic validation errors into our standard error format.
     """
-    errors = []
-    for error in exc.errors():
+    errors = exc.errors()
+
+    # Build a human-readable message from all errors
+    if len(errors) == 1:
+        error = errors[0]
         field = ".".join(str(loc) for loc in error["loc"] if loc != "body")
-        errors.append({"field": field, "message": error["msg"], "type": error["type"]})
+        message = f"{field}: {error['msg']}" if field else error["msg"]
+    else:
+        field_msgs = []
+        for error in errors:
+            field = ".".join(str(loc) for loc in error["loc"] if loc != "body")
+            field_msgs.append(field if field else error["msg"])
+        message = f"Invalid fields: {', '.join(field_msgs)}"
 
     logger.warning(
         "validation_error",
         error_count=len(errors),
-        errors=errors,
+        message=message,
         path=request.url.path,
     )
 
@@ -45,8 +56,7 @@ async def validation_exception_handler(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "errorCode": "VALIDATION_ERROR",
-            "message": "Input validation failed",
-            "details": {"errors": errors},
+            "message": message,
         },
     )
 
@@ -55,15 +65,24 @@ async def pydantic_validation_exception_handler(
     request: Request, exc: ValidationError
 ) -> JSONResponse:
     """Handle Pydantic ValidationError from custom validators."""
-    errors = []
-    for error in exc.errors():
+    errors = exc.errors()
+
+    # Build a human-readable message from all errors
+    if len(errors) == 1:
+        error = errors[0]
         field = ".".join(str(loc) for loc in error["loc"])
-        errors.append({"field": field, "message": error["msg"], "type": error["type"]})
+        message = f"{field}: {error['msg']}" if field else error["msg"]
+    else:
+        field_msgs = []
+        for error in errors:
+            field = ".".join(str(loc) for loc in error["loc"])
+            field_msgs.append(field if field else error["msg"])
+        message = f"Invalid fields: {', '.join(field_msgs)}"
 
     logger.warning(
         "pydantic_validation_error",
         error_count=len(errors),
-        errors=errors,
+        message=message,
         path=request.url.path,
     )
 
@@ -71,8 +90,19 @@ async def pydantic_validation_exception_handler(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "errorCode": "VALIDATION_ERROR",
-            "message": "Input validation failed",
-            "details": {"errors": errors},
+            "message": message,
+        },
+    )
+
+
+async def rate_limit_exceeded_handler(
+    request: Request, exc: RateLimitExceeded
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={
+            "errorCode": "RATE_LIMITED",
+            "message": "Too many requests. Please try again later.",
         },
     )
 

@@ -5,6 +5,7 @@ description = "AskIt Server API"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "alembic",
     "argon2-cffi>=25.1.0",
     "asyncpg",
     "attrs>=24.0.0",
@@ -21,6 +22,7 @@ dependencies = [
     "pyjwt",
     "python-dotenv",
     "redis",
+    "slowapi>=0.1.9",
     "sqlalchemy",
     "structlog>=24.0.0",
     "uvicorn[standard]",
@@ -40,6 +42,7 @@ dev = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
+exclude = "^alembic/"
 show_error_context = true
 show_error_codes = true
 warn_return_any = true
@@ -50,6 +53,13 @@ disallow_subclassing_any = false
 # Allow untyped decorators (needed for FastAPI route decorators)
 disallow_untyped_decorators = false
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+pythonpath = ["."]
+
 [[tool.mypy.overrides]]
 module = [
     "passlib.*",
@@ -57,3 +67,11 @@ module = [
     "structlog.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "alembic.*",
+    "slowapi.*",
+]
+ignore_missing_imports = true
+ignore_errors = true

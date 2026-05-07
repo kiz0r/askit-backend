@@ -35,3 +35,25 @@ class InvalidQuizDataError(AppException):
             message=message,
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
+
+
+class QuizPublishedError(AppException):
+    """Cannot modify a quiz while it is published."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            error_code="QUIZ_PUBLISHED",
+            message="This quiz is published. Move it to draft before editing.",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+
+
+class QuizNotPlayableError(AppException):
+    """Cannot start a game for a quiz that is not published."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            error_code="QUIZ_NOT_PLAYABLE",
+            message="This quiz is not published and cannot be played.",
+            status_code=status.HTTP_409_CONFLICT,
+        )

@@ -1,20 +1,25 @@
-from typing import Dict
-from fastapi import Request, Response, APIRouter, Depends
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth.exceptions import RefreshTokenMissingError, UserAlreadyExistsError
 from app.auth.services.auth_service import auth_service
+from app.auth.services.jwt_service import jwt_service
+from app.core.limiter import limiter
+from app.database import get_async_db
 from app.settings import is_dev
 from app.user.schemas import UserCreate, UserLogin, UserOut
 from app.user.services.user_service import user_service
-from app.auth.services.jwt_service import jwt_service
-from app.database import get_async_db
-from app.auth.exceptions import UserAlreadyExistsError, RefreshTokenMissingError
 
 router = APIRouter(tags=["Auth"])
 
 
 @router.post("/register", response_model=UserOut)
+@limiter.limit("5/minute")
 async def register(
-    user: UserCreate, response: Response, db: AsyncSession = Depends(get_async_db)
+    request: Request,
+    user: UserCreate,
+    response: Response,
+    db: AsyncSession = Depends(get_async_db),
 ) -> UserOut:
     found_user = await user_service.get_user_by_email(db, user.email)
     if found_user is not None:
@@ -47,7 +52,9 @@ async def register(
 
 
 @router.post("/login", response_model=UserOut)
+@limiter.limit("5/minute")
 async def login(
+    request: Request,
     data: UserLogin,
     response: Response,
     db: AsyncSession = Depends(get_async_db),
@@ -75,10 +82,11 @@ async def login(
 
 
 @router.post("/refresh")
+@limiter.limit("30/minute")
 async def refresh(
     request: Request,
     response: Response,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token:
         raise RefreshTokenMissingError()
@@ -100,7 +108,7 @@ async def refresh(
 
 
 @router.post("/logout")
-async def logout(response: Response) -> Dict[str, str]:
+async def logout(response: Response) -> dict[str, str]:
     response.delete_cookie("access_token")
     response.delete_cookie("refresh_token")
 

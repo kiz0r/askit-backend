@@ -1,28 +1,41 @@
 from datetime import datetime
-from typing import List
 from uuid import UUID
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
+
 from attrs import frozen
+from sqlalchemy import delete, insert, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.models.game import GameSession, GameSessionStatus
+from app.models.quiz import Quiz, QuizAnswer, QuizQuestion, Tag, quiz_favorites
 from app.models.user import User
-from app.models.quiz import Quiz, QuizQuestion, QuizAnswer, Tag
-from app.quiz.schemas import (
+
+from .exceptions import (
+    InvalidQuizDataError,
+    QuizAccessDeniedError,
+    QuizNotFoundError,
+    QuizPublishedError,
+)
+from .schemas import (
+    FavoriteActionResponse,
+    QuizAnswerOut,
     QuizCreate,
     QuizOut,
-    QuizUpdate,
-    QuizSettingsOut,
     QuizQuestionOut,
-    QuizAnswerOut,
+    QuizSettingsOut,
+    QuizStatsOut,
+    QuizStatus,
+    QuizUpdate,
+    TopPlayerOut,
 )
-from app.quiz.exceptions import InvalidQuizDataError
-from app.quiz.types import QuizId, QuestionId, AnswerId
+from .types import AnswerId, QuestionId, QuizId
 
 
 @frozen
 class QuizService:
     """
     Immutable service for quiz-related business logic.
+
     Stateless service - all methods operate on provided dependencies.
     """
 
@@ -62,8 +75,7 @@ class QuizService:
 
     def quiz_to_response(self, quiz: Quiz) -> QuizOut:
         """Convert Quiz model to QuizOut response schema."""
-        # Build questions list
-        questions_out: List[QuizQuestionOut] = []
+        questions_out: list[QuizQuestionOut] = []
         for question in quiz.questions:
             questions_out.append(
                 QuizQuestionOut(
@@ -71,7 +83,6 @@ class QuizService:
                     text=question.text,
                     position=question.position,
                     time_limit=question.time_limit,
-                    is_hidden=question.is_hidden,
                     answers=[
                         QuizAnswerOut(
                             answer_id=self._to_answer_id(answer.answer_id),
@@ -83,19 +94,17 @@ class QuizService:
                 )
             )
 
-        # Calculate estimated time: sum of time_limits for non-hidden questions
-        estimated_time = sum(q.time_limit for q in quiz.questions if not q.is_hidden)
-
-        # Extract tag names
+        estimated_time = sum(q.time_limit for q in quiz.questions)
         tags = [tag.name for tag in quiz.tags] if quiz.tags else []
 
         return QuizOut(
             quiz_id=self._to_quiz_id(quiz.quiz_id),
+            creator_id=str(quiz.creator_id),
             title=quiz.title,
             description=quiz.description,
             tags=tags,
+            status=quiz.status,
             settings=QuizSettingsOut(
-                randomize_answers=quiz.randomize_answers,
                 default_time_per_question=quiz.default_time_per_question,
                 visibility=quiz.visibility,
                 max_participants=quiz.max_participants,
@@ -107,8 +116,8 @@ class QuizService:
         )
 
     async def _get_or_create_tags(
-        self, db: AsyncSession, tag_names: List[str]
-    ) -> List[Tag]:
+        self, db: AsyncSession, tag_names: list[str]
+    ) -> list[Tag]:
         """Get existing tags or create new ones."""
         if not tag_names:
             return []
@@ -133,7 +142,6 @@ class QuizService:
             title=data.title,
             description=data.description,
             creator_id=user.id,
-            randomize_answers=data.settings.randomize_answers,
             default_time_per_question=data.settings.default_time_per_question,
             visibility=data.settings.visibility,
             max_participants=data.settings.max_participants,
@@ -145,17 +153,14 @@ class QuizService:
                 text=question_data.text,
                 position=position,
                 time_limit=question_data.time_limit,
-                is_hidden=question_data.is_hidden,
-                quiz=quiz,
             )
-            answers_objs: List[QuizAnswer] = []
+            answers_objs: list[QuizAnswer] = []
             correct_answers = []
 
             for answer_data in question_data.answers:
                 answer = QuizAnswer(
                     text=answer_data.text,
                     is_correct=answer_data.is_correct,
-                    question=question,
                 )
                 answers_objs.append(answer)
                 if answer_data.is_correct:
@@ -184,7 +189,9 @@ class QuizService:
         quiz = result.scalars().first()
         return self.quiz_to_response(quiz)
 
-    async def get_quiz(self, db: AsyncSession, quiz_id: QuizId) -> QuizOut | None:
+    async def get_quiz(
+        self, db: AsyncSession, quiz_id: QuizId, owner: User | None = None
+    ) -> QuizOut | None:
         try:
             uuid_val = self._from_quiz_id(quiz_id)
             result = await db.execute(
@@ -198,9 +205,10 @@ class QuizService:
             quiz = result.scalars().first()
             if quiz is None:
                 return None
+            if owner is not None and quiz.creator_id != owner.id:
+                return None
             return self.quiz_to_response(quiz)
         except ValueError:
-            # Invalid UUID format - treat as not found
             return None
 
     async def update_quiz(
@@ -224,6 +232,9 @@ class QuizService:
         if quiz.creator_id != user.id:
             return None
 
+        if quiz.status == QuizStatus.published:
+            raise QuizPublishedError()
+
         # Update fields if provided
         if data.title is not None:
             quiz.title = data.title
@@ -232,7 +243,6 @@ class QuizService:
         if data.tags is not None:
             quiz.tags = await self._get_or_create_tags(db, data.tags)
         if data.settings is not None:
-            quiz.randomize_answers = data.settings.randomize_answers
             quiz.default_time_per_question = data.settings.default_time_per_question
             quiz.visibility = data.settings.visibility
             quiz.max_participants = data.settings.max_participants
@@ -251,17 +261,14 @@ class QuizService:
                     text=question_data.text,
                     position=position,
                     time_limit=question_data.time_limit,
-                    is_hidden=question_data.is_hidden,
-                    quiz=quiz,
                 )
-                answers_objs: List[QuizAnswer] = []
+                answers_objs: list[QuizAnswer] = []
                 correct_answers = []
 
                 for answer_data in question_data.answers:
                     answer = QuizAnswer(
                         text=answer_data.text,
                         is_correct=answer_data.is_correct,
-                        question=question,
                     )
                     answers_objs.append(answer)
                     if answer_data.is_correct:
@@ -292,6 +299,57 @@ class QuizService:
         quiz = result.scalars().first()
         return self.quiz_to_response(quiz)
 
+    async def _set_quiz_status(
+        self,
+        db: AsyncSession,
+        quiz_id: QuizId,
+        user: User,
+        new_status: QuizStatus,
+    ) -> QuizOut:
+        uuid_val = self._from_quiz_id(quiz_id)
+        result = await db.execute(
+            select(Quiz)
+            .where(Quiz.quiz_id == uuid_val)
+            .options(
+                selectinload(Quiz.questions).selectinload(QuizQuestion.answers),
+                selectinload(Quiz.tags),
+            )
+        )
+        quiz = result.scalars().first()
+
+        if quiz is None:
+            raise QuizNotFoundError()
+        if quiz.creator_id != user.id:
+            raise QuizAccessDeniedError()
+
+        if new_status == QuizStatus.published and not quiz.questions:
+            raise InvalidQuizDataError("Cannot publish a quiz that has no questions.")
+
+        quiz.status = new_status
+        quiz.updated_at = datetime.utcnow()
+        await db.commit()
+
+        result = await db.execute(
+            select(Quiz)
+            .where(Quiz.quiz_id == uuid_val)
+            .options(
+                selectinload(Quiz.questions).selectinload(QuizQuestion.answers),
+                selectinload(Quiz.tags),
+            )
+        )
+        quiz = result.scalars().first()
+        return self.quiz_to_response(quiz)
+
+    async def publish_quiz(
+        self, db: AsyncSession, quiz_id: QuizId, user: User
+    ) -> QuizOut:
+        return await self._set_quiz_status(db, quiz_id, user, QuizStatus.published)
+
+    async def unpublish_quiz(
+        self, db: AsyncSession, quiz_id: QuizId, user: User
+    ) -> QuizOut:
+        return await self._set_quiz_status(db, quiz_id, user, QuizStatus.draft)
+
     async def delete_quiz(self, db: AsyncSession, quiz_id: QuizId, user: User) -> bool:
         uuid_val = self._from_quiz_id(quiz_id)
         result = await db.execute(
@@ -312,7 +370,7 @@ class QuizService:
         await db.commit()
         return True
 
-    async def list_quizzes(self, db: AsyncSession, user: User) -> List[QuizOut]:
+    async def list_quizzes(self, db: AsyncSession, user: User) -> list[QuizOut]:
         result = await db.execute(
             select(Quiz)
             .where(Quiz.creator_id == user.id)
@@ -323,6 +381,155 @@ class QuizService:
         )
         quizzes = result.scalars().all()
         return [self.quiz_to_response(quiz) for quiz in quizzes]
+
+    # -------------------------------------------------------------------------
+    # Favorites
+    # -------------------------------------------------------------------------
+
+    async def add_favorite(
+        self, db: AsyncSession, quiz_id: QuizId, user: User
+    ) -> FavoriteActionResponse | None:
+        """Add a quiz to user's favorites. Returns None if quiz not found."""
+
+        uuid_val = self._from_quiz_id(quiz_id)
+
+        # Check if quiz exists
+        result = await db.execute(select(Quiz).where(Quiz.quiz_id == uuid_val))
+        quiz = result.scalars().first()
+        if quiz is None:
+            return None
+
+        # Check if already favorited
+        already = await db.execute(
+            select(quiz_favorites).where(
+                quiz_favorites.c.user_id == user.id,
+                quiz_favorites.c.quiz_id == uuid_val,
+            )
+        )
+        if already.first() is not None:
+            return FavoriteActionResponse(quiz_id=str(uuid_val), is_favorited=True)
+
+        await db.execute(
+            insert(quiz_favorites).values(user_id=user.id, quiz_id=uuid_val)
+        )
+        await db.commit()
+
+        return FavoriteActionResponse(quiz_id=str(uuid_val), is_favorited=True)
+
+    async def remove_favorite(
+        self, db: AsyncSession, quiz_id: QuizId, user: User
+    ) -> FavoriteActionResponse | None:
+        """Remove a quiz from user's favorites. Returns None if quiz not found."""
+        uuid_val = self._from_quiz_id(quiz_id)
+
+        # Check if quiz exists
+        result = await db.execute(select(Quiz).where(Quiz.quiz_id == uuid_val))
+        quiz = result.scalars().first()
+        if quiz is None:
+            return None
+
+        # Remove from favorites if present
+        await db.execute(
+            delete(quiz_favorites).where(
+                quiz_favorites.c.user_id == user.id,
+                quiz_favorites.c.quiz_id == uuid_val,
+            )
+        )
+        await db.commit()
+
+        return FavoriteActionResponse(
+            quiz_id=str(uuid_val),
+            is_favorited=False,
+        )
+
+    async def list_favorites(self, db: AsyncSession, user: User) -> list[QuizOut]:
+        """List all favorited quizzes for a user."""
+        result = await db.execute(
+            select(Quiz)
+            .join(Quiz.favorited_by)
+            .where(User.id == user.id)
+            .options(
+                selectinload(Quiz.questions).selectinload(QuizQuestion.answers),
+                selectinload(Quiz.tags),
+            )
+        )
+        quizzes = result.scalars().all()
+        return [self.quiz_to_response(quiz) for quiz in quizzes]
+
+    async def is_favorited(self, db: AsyncSession, quiz_id: QuizId, user: User) -> bool:
+        uuid_val = self._from_quiz_id(quiz_id)
+        result = await db.execute(
+            select(Quiz)
+            .join(Quiz.favorited_by)
+            .where(Quiz.quiz_id == uuid_val, User.id == user.id)
+        )
+        return result.scalars().first() is not None
+
+    async def get_quiz_stats(
+        self,
+        db: AsyncSession,
+        quiz_id: QuizId,
+        user: User,
+    ) -> QuizStatsOut:
+        quiz = await self.get_quiz(db, quiz_id)
+        if quiz is None:
+            raise QuizNotFoundError()
+        if str(quiz.creator_id) != str(user.id):
+            raise QuizAccessDeniedError()
+
+        sessions_result = await db.execute(
+            select(GameSession)
+            .options(selectinload(GameSession.players))
+            .where(
+                GameSession.quiz_id == UUID(quiz_id),
+                GameSession.status == GameSessionStatus.finished,
+            )
+        )
+        sessions = sessions_result.scalars().all()
+
+        if not sessions:
+            return QuizStatsOut(
+                quiz_id=quiz_id,
+                times_played=0,
+                total_players=0,
+                average_score=0,
+                average_duration_seconds=0,
+                top_players=[],
+            )
+
+        all_players = [p for s in sessions for p in s.players]
+        total_players = len(all_players)
+        average_score = (
+            sum(p.score for p in all_players) // total_players if total_players else 0
+        )
+
+        durations = [
+            int((s.ended_at - s.started_at).total_seconds())
+            for s in sessions
+            if s.started_at and s.ended_at
+        ]
+        average_duration = sum(durations) // len(durations) if durations else 0
+
+        top_players = [
+            TopPlayerOut(
+                nickname=str(p.nickname),
+                score=p.score,
+                played_at=s.started_at or datetime.min,
+            )
+            for s in sessions
+            for p in s.players
+        ]
+        top_players.sort(key=lambda x: x.score, reverse=True)
+        top_players = top_players[:10]
+
+        return QuizStatsOut(
+            quiz_id=quiz_id,
+            times_played=len(sessions),
+            total_players=total_players,
+            average_score=average_score,
+            average_duration_seconds=average_duration,
+            top_players=top_players,
+        )
 
 
 # Singleton instance

@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_async_db
@@ -31,3 +32,33 @@ async def get_current_user(
         raise UserInactiveError()
 
     return user
+
+
+async def get_optional_current_user(
+    request: Request,
+    db: AsyncSession = Depends(get_async_db),
+) -> Optional[User]:
+    """
+    Get current user if authenticated, otherwise return None.
+
+    Use for endpoints that work for both guests and logged-in users.
+    """
+    token = request.cookies.get("access_token")
+    if not token:
+        return None
+
+    try:
+        payload = jwt_service.verify_access_token(token)
+        sub = payload.get("sub")
+        if not sub:
+            return None
+
+        user_id = UserId(sub)
+        user = await user_service.get_user_by_id(db, user_id)
+
+        if not user or not user.is_active:
+            return None
+
+        return user
+    except Exception:
+        return None
