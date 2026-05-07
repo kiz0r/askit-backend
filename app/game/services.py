@@ -12,8 +12,8 @@ from app.core.logging import get_logger
 from app.models.game import GamePlayer, GamePlayerAnswer, GameSession, GameSessionStatus
 from app.models.quiz import Quiz, QuizQuestion
 from app.models.user import User
-from app.user.schemas import GameHistoryItem, GameHistoryOut
 from app.redis import get_redis_client
+from app.user.schemas import GameHistoryItem, GameHistoryOut
 
 from .exceptions import (
     AlreadyAnsweredError,
@@ -36,6 +36,12 @@ from .schemas import (
 )
 
 logger = get_logger(__name__)
+
+
+def _utcnow() -> datetime:
+    """Naive UTC datetime for TIMESTAMP WITHOUT TIME ZONE DB columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 # Redis key prefixes
 ROOM_STATE_KEY = "game:state:{room_code}"
@@ -237,7 +243,7 @@ class GameService:
 
         # Update session status
         session.status = GameSessionStatus.starting
-        session.started_at = datetime.now(timezone.utc)
+        session.started_at = _utcnow()
         await db.commit()
 
         # Store question order in Redis
@@ -307,7 +313,7 @@ class GameService:
         if question_index > len(question_ids):
             # Game finished
             session.status = GameSessionStatus.finished
-            session.ended_at = datetime.now(timezone.utc)
+            session.ended_at = _utcnow()
             await db.commit()
             return None
 

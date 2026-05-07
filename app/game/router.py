@@ -243,7 +243,10 @@ async def handle_websocket_message(
             player_id,
             {
                 "type": WSMessageType.ERROR.value,
-                "payload": {"code": "HANDLER_ERROR", "message": str(e)},
+                "payload": {
+                    "code": "HANDLER_ERROR",
+                    "message": "An unexpected error occurred",
+                },
             },
         )
 
@@ -380,11 +383,15 @@ async def handle_answer(
             )
 
     except Exception as e:
+        logger.error("answer_handler_error", error=str(e))
         await connection_manager.send_to_player(
             player_id,
             {
                 "type": WSMessageType.ERROR.value,
-                "payload": {"code": "ANSWER_ERROR", "message": str(e)},
+                "payload": {
+                    "code": "ANSWER_ERROR",
+                    "message": "Failed to process answer",
+                },
             },
         )
 
@@ -482,7 +489,9 @@ async def end_game(db: AsyncSession, room_code: str) -> None:
         duration = int((session.ended_at - session.started_at).total_seconds())
     elif session.started_at:
         duration = int(
-            (datetime.now(timezone.utc) - session.started_at).total_seconds()
+            (
+                datetime.now(timezone.utc).replace(tzinfo=None) - session.started_at
+            ).total_seconds()
         )
 
     question_count = len(session.quiz.questions)
