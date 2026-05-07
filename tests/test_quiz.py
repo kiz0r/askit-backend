@@ -1,0 +1,131 @@
+from httpx import AsyncClient
+
+USER = {"username": "quizuser", "email": "quiz@example.com", "password": "TestPass123!"}
+USER2 = {
+    "username": "quizuser2",
+    "email": "quiz2@example.com",
+    "password": "TestPass123!",
+}
+
+_QUIZ = {
+    "title": "Test Quiz",
+    "settings": {"defaultTimePerQuestion": 30000, "maxParticipants": 10},
+    "questions": [],
+}
+
+_QUIZ_WITH_QUESTION = {
+    "title": "Test Quiz",
+    "settings": {"defaultTimePerQuestion": 30000, "maxParticipants": 10},
+    "questions": [
+        {
+            "text": "What is 2+2?",
+            "timeLimit": 30000,
+            "answers": [
+                {"text": "3", "isCorrect": False},
+                {"text": "4", "isCorrect": True},
+            ],
+        }
+    ],
+}
+
+
+async def _create_quiz(client: AsyncClient, with_question: bool = False) -> str:
+    await client.post("/api/v1/auth/register", json=USER)
+    body = _QUIZ_WITH_QUESTION if with_question else _QUIZ
+    resp = await client.post("/api/v1/quiz", json=body)
+    assert resp.status_code == 200
+    quiz_id: str = resp.json()["quizId"]
+    return quiz_id
+
+
+async def test_create_quiz(client: AsyncClient) -> None:
+    quiz_id = await _create_quiz(client)
+    assert quiz_id
+
+
+async def test_list_quizzes_returns_only_own(client: AsyncClient) -> None:
+    await _create_quiz(client)
+
+    # Second user creates their own quiz
+    client.cookies.clear()
+    await client.post("/api/v1/auth/register", json=USER2)
+    await client.post("/api/v1/quiz", json=_QUIZ)
+
+    resp = await client.get("/api/v1/quiz")
+    assert resp.status_code == 200
+    assert len(resp.json()["items"]) == 1
+
+
+async def test_get_own_quiz(client: AsyncClient) -> None:
+    quiz_id = await _create_quiz(client)
+    resp = await client.get(f"/api/v1/quiz/{quiz_id}")
+    assert resp.status_code == 200
+    assert resp.json()["quizId"] == quiz_id
+
+
+async def test_get_foreign_quiz_denied(client: AsyncClient) -> None:
+    quiz_id = await _create_quiz(client)
+
+    client.cookies.clear()
+    await client.post("/api/v1/auth/register", json=USER2)
+    resp = await client.get(f"/api/v1/quiz/{quiz_id}")
+    assert resp.status_code in (403, 404)
+
+
+async def test_update_quiz(client: AsyncClient) -> None:
+    quiz_id = await _create_quiz(client)
+    resp = await client.patch(f"/api/v1/quiz/{quiz_id}", json={"title": "Updated"})
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "Updated"
+
+
+async def test_update_foreign_quiz_denied(client: AsyncClient) -> None:
+    quiz_id = await _create_quiz(client)
+
+    client.cookies.clear()
+    await client.post("/api/v1/auth/register", json=USER2)
+    resp = await client.patch(f"/api/v1/quiz/{quiz_id}", json={"title": "Hacked"})
+    assert resp.status_code in (403, 404)
+
+
+async def test_delete_quiz(client: AsyncClient) -> None:
+    quiz_id = await _create_quiz(client)
+    resp = await client.delete(f"/api/v1/quiz/{quiz_id}")
+    assert resp.status_code == 204
+
+
+async def test_publish_empty_quiz_fails(client: AsyncClient) -> None:
+    quiz_id = await _create_quiz(client, with_question=False)
+    resp = await client.post(f"/api/v1/quiz/{quiz_id}/publish")
+    assert resp.status_code in (409, 422)
+
+
+async def test_publish_and_unpublish(client: AsyncClient) -> None:
+    quiz_id = await _create_quiz(client, with_question=True)
+
+    pub = await client.post(f"/api/v1/quiz/{quiz_id}/publish")
+    assert pub.status_code == 200
+    assert pub.json()["status"] == "published"
+
+    unpub = await client.post(f"/api/v1/quiz/{quiz_id}/unpublish")
+    assert unpub.status_code == 200
+    assert unpub.json()["status"] == "draft"
+
+
+async def test_cannot_edit_published_quiz(client: AsyncClient) -> None:
+    quiz_id = await _create_quiz(client, with_question=True)
+    await client.post(f"/api/v1/quiz/{quiz_id}/publish")
+    resp = await client.patch(f"/api/v1/quiz/{quiz_id}", json={"title": "New Title"})
+    assert resp.status_code == 409
+
+
+async def test_favorite_add_and_remove(client: AsyncClient) -> None:
+    quiz_id = await _create_quiz(client)
+
+    add = await client.post(f"/api/v1/quiz/{quiz_id}/favorite")
+    assert add.status_code == 200
+    assert add.json()["isFavorited"] is True
+
+    remove = await client.delete(f"/api/v1/quiz/{quiz_id}/favorite")
+    assert remove.status_code == 200
+    assert remove.json()["isFavorited"] is False
