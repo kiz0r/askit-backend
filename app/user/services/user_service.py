@@ -1,39 +1,40 @@
 from datetime import datetime, timezone
 from typing import cast
 from uuid import UUID
+
+from attrs import frozen
+from pydantic import EmailStr
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import EmailStr
-from attrs import frozen
-from app.models.user import User
+
+from app.auth.exceptions import (
+    InvalidCredentialsError,
+    UserAlreadyExistsError,
+    UsernameAlreadyExistsError,
+)
 from app.auth.services.password_service import password_service
-from app.auth.exceptions import UserAlreadyExistsError, UsernameAlreadyExistsError
+from app.models.user import User
+from app.user.schemas import UserOut, UserUpdate
 from app.user.types import UserId
-from app.user.schemas import UserOut
 
 
 @frozen
 class UserService:
     """
     Immutable service for user-related business logic.
+
     Stateless service - all methods operate on provided dependencies.
     """
 
     def _to_user_id(self, value: str | UUID) -> UserId:
-        """
-        Convert UUID to UserId branded type.
-        Private method for internal service use only.
-        """
+        """Convert UUID to UserId branded type."""
         if isinstance(value, UUID):
             return UserId(str(value))
         return UserId(value)
 
     def _from_user_id(self, user_id: UserId) -> UUID:
-        """
-        Convert UserId branded type to UUID for database operations.
-        Private method for internal service use only.
-        """
+        """Convert UserId branded type to UUID for database operations."""
         return UUID(user_id)
 
     def user_to_response(self, user: User) -> UserOut:
@@ -81,6 +82,39 @@ class UserService:
 
     async def update_last_login(self, db: AsyncSession, user: User) -> None:
         user.last_login = datetime.now(timezone.utc)
+        await db.commit()
+
+    async def update_profile(
+        self,
+        db: AsyncSession,
+        user: User,
+        data: UserUpdate,
+    ) -> UserOut:
+        if data.username is not None:
+            user.username = data.username
+        if data.email is not None:
+            user.email = str(data.email)
+        try:
+            await db.commit()
+            await db.refresh(user)
+        except IntegrityError as e:
+            await db.rollback()
+            error_msg = str(e.orig).lower()
+            if "email" in error_msg:
+                raise UserAlreadyExistsError()
+            raise UsernameAlreadyExistsError()
+        return self.user_to_response(user)
+
+    async def change_password(
+        self,
+        db: AsyncSession,
+        user: User,
+        current_password: str,
+        new_password: str,
+    ) -> None:
+        if not password_service.verify_password(current_password, user.password_hash):
+            raise InvalidCredentialsError()
+        user.password_hash = password_service.hash_password(new_password)
         await db.commit()
 
 

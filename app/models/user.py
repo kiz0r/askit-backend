@@ -1,11 +1,17 @@
-from sqlalchemy import Column, UUID, VARCHAR, Boolean, DateTime
+"""User-related database models."""
+
+import uuid
+
+from sqlalchemy import UUID, VARCHAR, Boolean, Column, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+
 from app.database import Base
-import uuid
 
 
 class User(Base):
+    """Registered user model."""
+
     __tablename__ = "users"
 
     id = Column(
@@ -23,9 +29,14 @@ class User(Base):
     is_active = Column(Boolean, default=True)
 
     quizzes = relationship("Quiz", back_populates="creator")
+    favorite_quizzes = relationship(
+        "Quiz", secondary="quiz_favorites", back_populates="favorited_by"
+    )
 
 
 class AnonymousUser(Base):
+    """Anonymous user for game participation without registration."""
+
     __tablename__ = "anonymous_users"
 
     id = Column(
