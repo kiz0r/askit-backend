@@ -1,14 +1,10 @@
-"""FastAPI application entry point."""
-
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 from slowapi.errors import RateLimitExceeded
-
 from app.auth.router import router as auth_router
 from app.core.exception_handlers import (
     app_exception_handler,
@@ -20,7 +16,11 @@ from app.core.exception_handlers import (
 from app.core.exceptions import AppException
 from app.core.limiter import limiter
 from app.core.logging import configure_logging, get_logger
-from app.core.middleware import AutoRefreshMiddleware, RequestIDMiddleware
+from app.core.middleware import (
+    AutoRefreshMiddleware,
+    RequestIDMiddleware,
+    SecurityHeadersMiddleware,
+)
 from app.database import init_db
 from app.game.router import router as game_router
 from app.game.router import ws_router
@@ -71,10 +71,8 @@ app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(ValidationError, pydantic_validation_exception_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
 
-# Add request ID tracking middleware (must be added before CORS)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestIDMiddleware)
-
-# Auto-refresh expired access tokens using valid refresh tokens
 app.add_middleware(AutoRefreshMiddleware)
 
 app.add_middleware(

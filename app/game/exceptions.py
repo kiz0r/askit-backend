@@ -37,17 +37,6 @@ class GameAlreadyStartedError(AppException):
         )
 
 
-class GameNotStartedError(AppException):
-    """Game has not started yet."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            error_code="GAME_NOT_STARTED",
-            message="Game has not started yet",
-            status_code=status.HTTP_409_CONFLICT,
-        )
-
-
 class NotHostError(AppException):
     """Only the host can perform this action."""
 

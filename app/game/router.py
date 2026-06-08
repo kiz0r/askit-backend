@@ -1,18 +1,30 @@
 import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
-from sqlalchemy import select
+from fastapi import (
+    APIRouter,
+    Depends,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user, get_optional_current_user
+from app.auth.services.jwt_service import jwt_service
+from app.core.limiter import limiter
 from app.core.logging import get_logger
+from app.core.security import create_ws_token, verify_ws_token
 from app.database import get_async_db
 from app.models.game import GameSessionStatus
 from app.models.user import User
+from app.settings import ENV_SETTINGS, is_dev
+from app.user.services.user_service import user_service
+from app.user.types import UserId
 
 from .connection_manager import connection_manager
-from .exceptions import RoomNotFoundError
+from .exceptions import AlreadyAnsweredError, QuestionNotActiveError, RoomNotFoundError
 from .schemas import (
     CreateRoomRequest,
     JoinRoomRequest,
@@ -21,7 +33,9 @@ from .schemas import (
     WSAnswerSubmit,
     WSGameFinished,
     WSGameStarting,
+    WSHostAnswerUpdate,
     WSMessageType,
+    WSPlayerAnswered,
     WSPlayerJoined,
     WSPlayerLeft,
     WSQuestionEnded,
@@ -34,18 +48,14 @@ router = APIRouter(tags=["Game"])
 ws_router = APIRouter(tags=["WebSocket"])
 
 
-# =============================================================================
-# REST Endpoints
-# =============================================================================
-
-
 @router.post("/room", response_model=RoomResponse)
+@limiter.limit("10/minute")
 async def create_room(
+    request: Request,
     data: CreateRoomRequest,
     db: AsyncSession = Depends(get_async_db),
     user: User = Depends(get_current_user),
 ) -> RoomResponse:
-    """Create a new game room for a quiz."""
     return await game_service.create_room(db, user, data)
 
 
@@ -54,7 +64,6 @@ async def get_room(
     room_code: str,
     db: AsyncSession = Depends(get_async_db),
 ) -> RoomResponse:
-    """Get game room details."""
     session = await game_service.get_room(db, room_code)
     if session is None:
         raise RoomNotFoundError()
@@ -70,24 +79,25 @@ async def get_room(
 
 
 @router.post("/room/{room_code}/join", response_model=PlayerInfo)
+@limiter.limit("20/minute")
 async def join_room(
+    request: Request,
+    response: Response,
     room_code: str,
     data: JoinRoomRequest,
     db: AsyncSession = Depends(get_async_db),
     user: User | None = Depends(get_optional_current_user),
 ) -> PlayerInfo:
-    """
-    Join a game room (REST endpoint for initial join).
-
-    After this, connect via WebSocket for real-time updates.
-    """
-    session, player = await game_service.join_room(
-        db,
-        room_code,
-        data.nickname,
-        user,
+    session, player = await game_service.join_room(db, room_code, data.nickname, user)
+    ws_token = await create_ws_token(str(player.player_id))
+    response.set_cookie(
+        key="ws_token",
+        value=ws_token,
+        httponly=True,
+        samesite="lax",
+        secure=not is_dev(),
+        max_age=4 * 3600,
     )
-
     return PlayerInfo(
         player_id=str(player.player_id),
         nickname=player.nickname,
@@ -96,37 +106,27 @@ async def join_room(
     )
 
 
-# =============================================================================
-# WebSocket Endpoint
-# =============================================================================
-
-
 @ws_router.websocket("/game/{room_code}")
-async def websocket_endpoint(
+async def websocket_player_endpoint(
     websocket: WebSocket,
     room_code: str,
-    player_id: str = Query(...),
     db: AsyncSession = Depends(get_async_db),
 ) -> None:
-    """
-    WebSocket endpoint for real-time game communication.
+    ws_token = websocket.cookies.get("ws_token")
+    if not ws_token:
+        await websocket.close(code=4001, reason="Not authenticated")
+        return
 
-    Query params:
-    - player_id: The player's ID (from join_room response)
+    player_id = await verify_ws_token(ws_token)
+    if player_id is None:
+        await websocket.close(code=4001, reason="Invalid or expired token")
+        return
 
-    Message format (both directions):
-    {
-        "type": "message_type",
-        "payload": { ... }
-    }
-    """
-    # Verify room exists
     session = await game_service.get_room(db, room_code)
     if session is None:
         await websocket.close(code=4004, reason="Room not found")
         return
 
-    # Verify player belongs to room
     player = next(
         (p for p in session.players if str(p.player_id) == player_id),
         None,
@@ -135,14 +135,11 @@ async def websocket_endpoint(
         await websocket.close(code=4004, reason="Player not found")
         return
 
-    # Connect
     await connection_manager.connect(websocket, room_code, player_id)
 
-    # Update player connection status
     player.is_connected = True
     await db.commit()
 
-    # Send current room state
     room_state = await game_service.build_room_state(db, room_code)
     if room_state:
         await connection_manager.send_to_player(
@@ -153,7 +150,6 @@ async def websocket_endpoint(
             },
         )
 
-    # Notify others that player joined
     await connection_manager.broadcast_to_room(
         room_code,
         {
@@ -172,32 +168,22 @@ async def websocket_endpoint(
 
     try:
         while True:
-            # Receive message from client
             data = await websocket.receive_json()
-            await handle_websocket_message(
-                db,
-                room_code,
-                player_id,
-                data,
-                session.host_id == player.user_id if player.user_id else False,
-            )
+            await handle_player_message(db, room_code, player_id, data)
 
     except WebSocketDisconnect:
-        logger.info("websocket_disconnect", player_id=player_id, room_code=room_code)
+        logger.info("player_disconnect", player_id=player_id, room_code=room_code)
     except Exception as e:
-        logger.error("websocket_error", error=str(e), player_id=player_id)
+        logger.error("player_ws_error", error=str(e), player_id=player_id)
     finally:
-        # Clean up
         await connection_manager.disconnect(websocket, room_code, player_id)
 
-        # Update player connection status
         try:
             player.is_connected = False
             await db.commit()
         except Exception:
             pass
 
-        # Notify others that player left
         await connection_manager.broadcast_to_room(
             room_code,
             {
@@ -210,14 +196,77 @@ async def websocket_endpoint(
         )
 
 
-async def handle_websocket_message(
+@ws_router.websocket("/game/{room_code}/host")
+async def websocket_host_endpoint(
+    websocket: WebSocket,
+    room_code: str,
+    db: AsyncSession = Depends(get_async_db),
+) -> None:
+    origin = websocket.headers.get("origin")
+    if origin and origin not in ENV_SETTINGS.cors_origins_list:
+        await websocket.close(code=4003, reason="Origin not allowed")
+        return
+
+    token = websocket.cookies.get("access_token")
+    if not token:
+        await websocket.close(code=4001, reason="Not authenticated")
+        return
+
+    try:
+        payload = jwt_service.verify_access_token(token)
+        sub = payload.get("sub")
+        if not sub:
+            await websocket.close(code=4001, reason="Invalid token")
+            return
+        host_user = await user_service.get_user_by_id(db, UserId(sub))
+    except Exception:
+        await websocket.close(code=4001, reason="Invalid token")
+        return
+
+    if not host_user or not host_user.is_active:
+        await websocket.close(code=4001, reason="User not found")
+        return
+
+    session = await game_service.get_room(db, room_code)
+    if session is None:
+        await websocket.close(code=4004, reason="Room not found")
+        return
+
+    if session.host_id != host_user.id:
+        await websocket.close(code=4003, reason="Not the host of this room")
+        return
+
+    await connection_manager.connect_host(websocket, room_code)
+
+    room_state = await game_service.build_room_state(db, room_code)
+    if room_state:
+        await connection_manager.send_to_host(
+            room_code,
+            {
+                "type": WSMessageType.ROOM_STATE.value,
+                "payload": room_state.model_dump(by_alias=True),
+            },
+        )
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            await handle_host_message(db, room_code, host_user, data)
+
+    except WebSocketDisconnect:
+        logger.info("host_disconnect", room_code=room_code)
+    except Exception as e:
+        logger.error("host_ws_error", error=str(e), room_code=room_code)
+    finally:
+        await connection_manager.disconnect_host(websocket, room_code)
+
+
+async def handle_player_message(
     db: AsyncSession,
     room_code: str,
     player_id: str,
     data: dict[str, object],
-    is_host: bool,
 ) -> None:
-    """Handle incoming WebSocket messages."""
     try:
         message_type = data.get("type")
         raw_payload = data.get("payload", {})
@@ -225,20 +274,13 @@ async def handle_websocket_message(
             raw_payload if isinstance(raw_payload, dict) else {}
         )
 
-        if message_type == WSMessageType.START_GAME.value:
-            await handle_start_game(db, room_code, player_id, is_host)
-
-        elif message_type == WSMessageType.NEXT_QUESTION.value:
-            await handle_next_question(db, room_code, player_id, is_host)
-
-        elif message_type == WSMessageType.ANSWER.value:
+        if message_type == WSMessageType.ANSWER.value:
             await handle_answer(db, room_code, player_id, payload)
-
         else:
-            logger.warning("unknown_message_type", type=message_type)
+            logger.warning("unknown_player_message_type", type=message_type)
 
     except Exception as e:
-        logger.error("message_handler_error", error=str(e))
+        logger.error("player_message_handler_error", error=str(e))
         await connection_manager.send_to_player(
             player_id,
             {
@@ -251,38 +293,41 @@ async def handle_websocket_message(
         )
 
 
-async def handle_start_game(
+async def handle_host_message(
     db: AsyncSession,
     room_code: str,
-    player_id: str,
-    is_host: bool,
+    host_user: User,
+    data: dict[str, object],
 ) -> None:
-    """Handle game start request from host."""
-    if not is_host:
-        await connection_manager.send_to_player(
-            player_id,
+    try:
+        message_type = data.get("type")
+
+        if message_type == WSMessageType.START_GAME.value:
+            await handle_start_game(db, room_code, host_user)
+
+        elif message_type == WSMessageType.NEXT_QUESTION.value:
+            await handle_next_question(db, room_code)
+
+        else:
+            logger.warning("unknown_host_message_type", type=message_type)
+
+    except Exception as e:
+        logger.error("host_message_handler_error", error=str(e))
+        await connection_manager.send_to_host(
+            room_code,
             {
                 "type": WSMessageType.ERROR.value,
                 "payload": {
-                    "code": "NOT_HOST",
-                    "message": "Only the host can start the game",
+                    "code": "HANDLER_ERROR",
+                    "message": "An unexpected error occurred",
                 },
             },
         )
-        return
 
-    session = await game_service.get_room(db, room_code)
-    if session is None:
-        return
 
-    user_result = await db.execute(select(User).where(User.id == session.host_id))
-    host_user = user_result.scalars().first()
-    if host_user is None:
-        return
-
+async def handle_start_game(db: AsyncSession, room_code: str, host_user: User) -> None:
     questions = await game_service.start_game(db, room_code, host_user)
 
-    # Broadcast game starting message
     await connection_manager.broadcast_to_room(
         room_code,
         {
@@ -294,33 +339,11 @@ async def handle_start_game(
         },
     )
 
-    # Wait for countdown
     await asyncio.sleep(3)
-
-    # Start first question
     await send_question(db, room_code, 1, len(questions))
 
 
-async def handle_next_question(
-    db: AsyncSession,
-    room_code: str,
-    player_id: str,
-    is_host: bool,
-) -> None:
-    """Handle next question request from host."""
-    if not is_host:
-        await connection_manager.send_to_player(
-            player_id,
-            {
-                "type": WSMessageType.ERROR.value,
-                "payload": {
-                    "code": "NOT_HOST",
-                    "message": "Only the host can advance questions",
-                },
-            },
-        )
-        return
-
+async def handle_next_question(db: AsyncSession, room_code: str) -> None:
     session = await game_service.get_room(db, room_code)
     if session is None:
         return
@@ -329,10 +352,8 @@ async def handle_next_question(
     next_index = session.current_question_index + 1
 
     if next_index > question_count:
-        # Game finished
         await end_game(db, room_code)
     else:
-        # Send leaderboard first
         leaderboard = await game_service.get_leaderboard(db, room_code)
         await connection_manager.broadcast_to_room(
             room_code,
@@ -345,10 +366,7 @@ async def handle_next_question(
             },
         )
 
-        # Wait a bit for leaderboard display
         await asyncio.sleep(5)
-
-        # Send next question
         await send_question(db, room_code, next_index, question_count)
 
 
@@ -358,7 +376,6 @@ async def handle_answer(
     player_id: str,
     payload: dict[str, object],
 ) -> None:
-    """Handle answer submission from player."""
     try:
         answer_data = WSAnswerSubmit.model_validate(payload)
         result = await game_service.submit_answer(
@@ -369,10 +386,18 @@ async def handle_answer(
             answer_data.answer_ids,
         )
 
-        # Get session for feedback setting
         session = await game_service.get_room(db, room_code)
 
-        # Send result to player (if immediate feedback enabled)
+        await connection_manager.broadcast_to_room(
+            room_code,
+            {
+                "type": WSMessageType.PLAYER_ANSWERED.value,
+                "payload": WSPlayerAnswered(player_id=player_id).model_dump(
+                    by_alias=True
+                ),
+            },
+        )
+
         if session and session.show_immediate_feedback:
             await connection_manager.send_to_player(
                 player_id,
@@ -382,6 +407,27 @@ async def handle_answer(
                 },
             )
 
+        if session:
+            player = next(
+                (p for p in session.players if str(p.player_id) == player_id), None
+            )
+            if player:
+                await connection_manager.send_to_host(
+                    room_code,
+                    {
+                        "type": WSMessageType.HOST_ANSWER_UPDATE.value,
+                        "payload": WSHostAnswerUpdate(
+                            player_id=player_id,
+                            nickname=player.nickname,
+                            is_correct=result.is_correct,
+                            answer_ids=answer_data.answer_ids,
+                            time_taken_ms=result.time_taken_ms,
+                        ).model_dump(by_alias=True),
+                    },
+                )
+
+    except (AlreadyAnsweredError, QuestionNotActiveError) as e:
+        logger.warning("answer_ignored", reason=type(e).__name__, player_id=player_id)
     except Exception as e:
         logger.error("answer_handler_error", error=str(e))
         await connection_manager.send_to_player(
@@ -402,14 +448,12 @@ async def send_question(
     question_index: int,
     total_questions: int,
 ) -> None:
-    """Send a question to all players."""
     question = await game_service.advance_to_question(db, room_code, question_index)
 
     if question is None:
         await end_game(db, room_code)
         return
 
-    # Get session for randomize_answers setting
     session = await game_service.get_room(db, room_code)
 
     question_msg = await game_service.build_question_message(
@@ -427,7 +471,6 @@ async def send_question(
         },
     )
 
-    # Schedule question timeout
     asyncio.create_task(
         question_timeout(db, room_code, question_index, question.time_limit)
     )
@@ -439,10 +482,8 @@ async def question_timeout(
     question_index: int,
     time_limit_ms: int,
 ) -> None:
-    """Handle question timeout."""
     await asyncio.sleep(time_limit_ms / 1000)
 
-    # Check if still on this question
     session = await game_service.get_room(db, room_code)
     if session is None or session.current_question_index != question_index:
         return
@@ -474,7 +515,6 @@ async def question_timeout(
 
 
 async def end_game(db: AsyncSession, room_code: str) -> None:
-    """End the game and send final results."""
     session = await game_service.get_room(db, room_code)
     if session is None:
         return
@@ -484,14 +524,17 @@ async def end_game(db: AsyncSession, room_code: str) -> None:
 
     leaderboard = await game_service.get_leaderboard(db, room_code)
 
-    duration = 0
+    duration_ms = 0
     if session.started_at and session.ended_at:
-        duration = int((session.ended_at - session.started_at).total_seconds())
+        duration_ms = int(
+            (session.ended_at - session.started_at).total_seconds() * 1000
+        )
     elif session.started_at:
-        duration = int(
+        duration_ms = int(
             (
                 datetime.now(timezone.utc).replace(tzinfo=None) - session.started_at
             ).total_seconds()
+            * 1000
         )
 
     question_count = len(session.quiz.questions)
@@ -503,7 +546,7 @@ async def end_game(db: AsyncSession, room_code: str) -> None:
             "payload": WSGameFinished(
                 final_leaderboard=leaderboard,
                 total_questions=question_count,
-                duration_seconds=duration,
+                duration_ms=duration_ms,
             ).model_dump(by_alias=True),
         },
     )
@@ -513,6 +556,6 @@ async def end_game(db: AsyncSession, room_code: str) -> None:
     logger.info(
         "game_finished",
         room_code=room_code,
-        duration_seconds=duration,
+        duration_ms=duration_ms,
         player_count=len(leaderboard),
     )
