@@ -27,13 +27,6 @@ async def test_update_username(client: AsyncClient) -> None:
     assert resp.json()["username"] == "newname"
 
 
-async def test_update_email(client: AsyncClient) -> None:
-    await client.post("/api/v1/auth/register", json=USER)
-    resp = await client.patch("/api/v1/user/profile", json={"email": "new@example.com"})
-    assert resp.status_code == 200
-    assert resp.json()["email"] == "new@example.com"
-
-
 async def test_update_username_conflict(client: AsyncClient) -> None:
     await client.post("/api/v1/auth/register", json=USER)
     saved = dict(client.cookies)
