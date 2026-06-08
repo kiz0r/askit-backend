@@ -6,7 +6,12 @@ from app.models.user import User
 from app.user.services.user_service import user_service
 from app.user.types import UserId
 from app.auth.services.jwt_service import jwt_service
-from app.auth.exceptions import NotAuthenticatedError, UserInactiveError
+from app.auth.exceptions import (
+    NotAuthenticatedError,
+    UserInactiveError,
+    TokenExpiredError,
+    InvalidTokenError,
+)
 
 
 async def get_current_user(
@@ -60,5 +65,5 @@ async def get_optional_current_user(
             return None
 
         return user
-    except Exception:
+    except (TokenExpiredError, InvalidTokenError):
         return None

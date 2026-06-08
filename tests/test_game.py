@@ -101,8 +101,7 @@ async def test_join_started_room(client: AsyncClient, db: AsyncSession) -> None:
     result = await db.execute(
         select(GameSession).where(GameSession.room_code == room_code)
     )
-    session = result.scalars().first()
-    assert session is not None
+    session = result.scalars().one()
     session.status = GameSessionStatus.question
     await db.commit()
 
@@ -194,7 +193,7 @@ async def test_answer_distribution(db: AsyncSession) -> None:
         .options(selectinload(QuizQuestion.answers))
         .where(QuizQuestion.question_id == question.question_id)
     )
-    question_loaded = result.scalars().first()
+    question_loaded = result.scalars().one()
 
     distribution = await game_service.compute_answer_distribution(
         db, session.session_id, question_loaded

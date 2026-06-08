@@ -1,39 +1,35 @@
+from typing import cast
+
 import structlog
 from fastapi import Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from slowapi.errors import RateLimitExceeded
 
 from app.core.exceptions import AppException
 
 logger = structlog.get_logger(__name__)
 
 
-async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
-    """Handle custom application exceptions and return flat structured response."""
+async def app_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    app_exc = cast(AppException, exc)
     logger.warning(
         "application_exception",
-        error_code=exc.error_code,
-        message=exc.message,
-        status_code=exc.status_code,
-        details=exc.details,
+        error_code=app_exc.error_code,
+        message=app_exc.message,
+        status_code=app_exc.status_code,
+        details=app_exc.details,
         path=request.url.path,
     )
-    return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+    return JSONResponse(status_code=app_exc.status_code, content=app_exc.to_dict())
 
 
 async def validation_exception_handler(
-    request: Request, exc: RequestValidationError
+    request: Request, exc: Exception
 ) -> JSONResponse:
-    """
-    Handle Pydantic validation errors and return structured response.
+    validation_exc = cast(RequestValidationError, exc)
+    errors = validation_exc.errors()
 
-    Converts Pydantic validation errors into our standard error format.
-    """
-    errors = exc.errors()
-
-    # Build a human-readable message from all errors
     if len(errors) == 1:
         error = errors[0]
         field = ".".join(str(loc) for loc in error["loc"] if loc != "body")
@@ -62,12 +58,11 @@ async def validation_exception_handler(
 
 
 async def pydantic_validation_exception_handler(
-    request: Request, exc: ValidationError
+    request: Request, exc: Exception
 ) -> JSONResponse:
-    """Handle Pydantic ValidationError from custom validators."""
-    errors = exc.errors()
+    validation_exc = cast(ValidationError, exc)
+    errors = validation_exc.errors()
 
-    # Build a human-readable message from all errors
     if len(errors) == 1:
         error = errors[0]
         field = ".".join(str(loc) for loc in error["loc"])
@@ -95,9 +90,7 @@ async def pydantic_validation_exception_handler(
     )
 
 
-async def rate_limit_exceeded_handler(
-    request: Request, exc: RateLimitExceeded
-) -> JSONResponse:
+async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         content={
@@ -108,11 +101,6 @@ async def rate_limit_exceeded_handler(
 
 
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """
-    Catch-all handler for unexpected exceptions.
-
-    In production, this prevents exposing internal error details.
-    """
     logger.error(
         "unhandled_exception",
         exc_info=exc,

@@ -36,8 +36,7 @@ class UserLogin(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    username: str | None = Field(default=None, validation_alias="username")
-    email: EmailStr | None = Field(default=None, validation_alias="email")
+    username: str | None = None
 
     @field_validator("username")
     @classmethod

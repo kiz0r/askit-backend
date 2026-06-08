@@ -1,12 +1,8 @@
-"""Quiz module exceptions."""
-
 from fastapi import status
 from app.core.exceptions import AppException
 
 
 class QuizNotFoundError(AppException):
-    """Quiz not found."""
-
     def __init__(self) -> None:
         super().__init__(
             error_code="QUIZ_NOT_FOUND",
@@ -16,8 +12,6 @@ class QuizNotFoundError(AppException):
 
 
 class QuizAccessDeniedError(AppException):
-    """User cannot access or modify this quiz."""
-
     def __init__(self) -> None:
         super().__init__(
             error_code="QUIZ_ACCESS_DENIED",
@@ -27,8 +21,6 @@ class QuizAccessDeniedError(AppException):
 
 
 class InvalidQuizDataError(AppException):
-    """Invalid quiz data (title, description, tags, questions, etc.)."""
-
     def __init__(self, message: str):
         super().__init__(
             error_code="INVALID_QUIZ_DATA",
@@ -38,8 +30,6 @@ class InvalidQuizDataError(AppException):
 
 
 class QuizPublishedError(AppException):
-    """Cannot modify a quiz while it is published."""
-
     def __init__(self) -> None:
         super().__init__(
             error_code="QUIZ_PUBLISHED",
@@ -49,8 +39,6 @@ class QuizPublishedError(AppException):
 
 
 class QuizNotPlayableError(AppException):
-    """Cannot start a game for a quiz that is not published."""
-
     def __init__(self) -> None:
         super().__init__(
             error_code="QUIZ_NOT_PLAYABLE",

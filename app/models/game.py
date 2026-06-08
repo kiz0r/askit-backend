@@ -1,100 +1,60 @@
-"""Game session models for real-time quiz gameplay."""
-
 import enum
 import secrets
 import uuid
+from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import (
-    UUID,
-    Boolean,
-    Column,
-    DateTime,
-    Enum,
-    ForeignKey,
-    Integer,
-    VARCHAR,
-)
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy import DateTime, ForeignKey, Integer, VARCHAR, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
+if TYPE_CHECKING:
+    from app.models.quiz import Quiz, QuizQuestion
+    from app.models.user import User
+
 
 def generate_room_code(length: int = 6) -> str:
-    """Generate a random room code (uppercase letters + digits, no confusing chars)."""
-    # Exclude confusing characters: 0, O, I, L, 1
     alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 class GameSessionStatus(str, enum.Enum):
-    """Game session lifecycle states."""
-
-    waiting = "waiting"  # Lobby, waiting for players
-    starting = "starting"  # Countdown before first question
-    question = "question"  # Showing question, accepting answers
-    revealing = "revealing"  # Showing correct answer
-    leaderboard = "leaderboard"  # Showing scores between questions
-    finished = "finished"  # Game over
+    waiting = "waiting"
+    starting = "starting"
+    question = "question"
+    revealing = "revealing"
+    leaderboard = "leaderboard"
+    finished = "finished"
 
 
 class GameSession(Base):
-    """
-    A game session (room) where players compete.
-
-    Lifecycle:
-    1. Host creates room → waiting
-    2. Players join with room_code
-    3. Host starts → starting → question
-    4. Cycle: question → revealing → leaderboard → question
-    5. Last question → finished
-    """
-
     __tablename__ = "game_sessions"
 
-    session_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
+    )
+    room_code: Mapped[str] = mapped_column(
+        VARCHAR(6), unique=True, index=True, default=generate_room_code
     )
 
-    # Room identification
-    room_code = Column(
-        VARCHAR(6),
-        unique=True,
-        nullable=False,
-        index=True,
-        default=generate_room_code,
-    )
+    quiz_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("quizzes.quiz_id"))
+    host_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
 
-    # References
-    quiz_id = Column(UUID, ForeignKey("quizzes.quiz_id"), nullable=False)
-    host_id = Column(UUID, ForeignKey("users.id"), nullable=False)
+    randomize_questions: Mapped[bool] = mapped_column(default=False)
+    randomize_answers: Mapped[bool] = mapped_column(default=False)
+    show_immediate_feedback: Mapped[bool] = mapped_column(default=True)
 
-    # Game settings (moved from quiz level)
-    randomize_questions = Column(Boolean, default=False)
-    randomize_answers = Column(Boolean, default=False)
-    show_immediate_feedback = Column(Boolean, default=True)
+    status: Mapped[GameSessionStatus] = mapped_column(default=GameSessionStatus.waiting)
+    current_question_index: Mapped[int] = mapped_column(Integer, default=0)
 
-    # Game state
-    status = Column(
-        Enum(GameSessionStatus, name="game_session_status"),
-        nullable=False,
-        default=GameSessionStatus.waiting,
-    )
-    current_question_index = Column(Integer, default=0)  # 0 = not started
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime)
 
-    # Timestamps
-    created_at = Column(DateTime, default=func.now())
-    started_at = Column(DateTime, nullable=True)
-    ended_at = Column(DateTime, nullable=True)
-
-    # Relationships
-    quiz = relationship("Quiz")
-    host = relationship("User")
-    players = relationship(
+    quiz: Mapped["Quiz"] = relationship("Quiz")
+    host: Mapped["User"] = relationship("User")
+    players: Mapped[list["GamePlayer"]] = relationship(
         "GamePlayer",
         back_populates="session",
         cascade="all, delete-orphan",
@@ -102,39 +62,29 @@ class GameSession(Base):
 
 
 class GamePlayer(Base):
-    """A player in a game session."""
-
     __tablename__ = "game_players"
 
-    player_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
+    player_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
     )
-    session_id = Column(
-        UUID,
-        ForeignKey("game_sessions.session_id"),
-        nullable=False,
-        index=True,
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("game_sessions.session_id"), index=True
     )
 
-    # Player identity
-    nickname = Column(VARCHAR(30), nullable=False)
-    user_id = Column(
-        UUID, ForeignKey("users.id"), nullable=True
-    )  # Optional if logged in
+    nickname: Mapped[str] = mapped_column(VARCHAR(30))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id"), index=True
+    )
 
-    # Game state
-    score = Column(Integer, default=0)
-    is_connected = Column(Boolean, default=True)
-    joined_at = Column(DateTime, default=func.now())
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    is_connected: Mapped[bool] = mapped_column(default=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
-    # Relationships
-    session = relationship("GameSession", back_populates="players")
-    user = relationship("User")
-    answers = relationship(
+    session: Mapped["GameSession"] = relationship(
+        "GameSession", back_populates="players"
+    )
+    user: Mapped["User | None"] = relationship("User")
+    answers: Mapped[list["GamePlayerAnswer"]] = relationship(
         "GamePlayerAnswer",
         back_populates="player",
         cascade="all, delete-orphan",
@@ -142,37 +92,24 @@ class GamePlayer(Base):
 
 
 class GamePlayerAnswer(Base):
-    """Records a player's answer to a question."""
-
     __tablename__ = "game_player_answers"
 
-    answer_record_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
+    answer_record_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
     )
-    player_id = Column(
-        UUID,
-        ForeignKey("game_players.player_id"),
-        nullable=False,
-        index=True,
+    player_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("game_players.player_id"), index=True
     )
-    question_id = Column(
-        UUID,
-        ForeignKey("quiz_questions.question_id"),
-        nullable=False,
+    question_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("quiz_questions.question_id", ondelete="CASCADE")
     )
 
-    # Answer details
-    selected_answer_ids = Column(VARCHAR(1000), nullable=False)  # JSON array of UUIDs
-    is_correct = Column(Boolean, nullable=False)
-    time_taken_ms = Column(Integer, nullable=False)  # Time to answer in ms
-    points_earned = Column(Integer, default=0)
+    selected_answer_ids: Mapped[str] = mapped_column(VARCHAR(1000))
+    is_correct: Mapped[bool] = mapped_column()
+    time_taken_ms: Mapped[int] = mapped_column(Integer)
+    points_earned: Mapped[int] = mapped_column(Integer, default=0)
 
-    answered_at = Column(DateTime, default=func.now())
+    answered_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
-    # Relationships
-    player = relationship("GamePlayer", back_populates="answers")
-    question = relationship("QuizQuestion")
+    player: Mapped["GamePlayer"] = relationship("GamePlayer", back_populates="answers")
+    question: Mapped["QuizQuestion"] = relationship("QuizQuestion")

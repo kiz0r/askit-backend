@@ -1,6 +1,8 @@
 import json
 import random
+from collections.abc import Awaitable
 from datetime import datetime, timezone
+from typing import cast
 from uuid import UUID
 
 from attrs import frozen
@@ -9,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.logging import get_logger
+from app.core.utils import utcnow
 from app.models.game import GamePlayer, GamePlayerAnswer, GameSession, GameSessionStatus
 from app.models.quiz import Quiz, QuizQuestion
 from app.models.user import User
@@ -38,13 +41,7 @@ from .schemas import (
 logger = get_logger(__name__)
 
 
-def _utcnow() -> datetime:
-    """Naive UTC datetime for TIMESTAMP WITHOUT TIME ZONE DB columns."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
-
-
 # Redis key prefixes
-ROOM_STATE_KEY = "game:state:{room_code}"
 QUESTION_START_KEY = "game:question_start:{room_code}"
 PLAYER_ANSWERED_KEY = "game:answered:{room_code}:{question_index}"
 PREV_RANKING_KEY = "game:prev_ranking:{room_code}"
@@ -198,22 +195,6 @@ class GameService:
 
         return session, player
 
-    async def remove_player(
-        self,
-        db: AsyncSession,
-        room_code: str,
-        player_id: str,
-    ) -> None:
-        """Remove a player from a game room."""
-        result = await db.execute(
-            select(GamePlayer).where(GamePlayer.player_id == UUID(player_id))
-        )
-        player = result.scalars().first()
-
-        if player:
-            await db.delete(player)
-            await db.commit()
-
     async def start_game(
         self,
         db: AsyncSession,
@@ -243,7 +224,7 @@ class GameService:
 
         # Update session status
         session.status = GameSessionStatus.starting
-        session.started_at = _utcnow()
+        session.started_at = utcnow()
         await db.commit()
 
         # Store question order in Redis
@@ -313,7 +294,7 @@ class GameService:
         if question_index > len(question_ids):
             # Game finished
             session.status = GameSessionStatus.finished
-            session.ended_at = _utcnow()
+            session.ended_at = utcnow()
             await db.commit()
             return None
 
@@ -360,7 +341,7 @@ class GameService:
             room_code=room_code,
             question_index=session.current_question_index,
         )
-        if await redis_client.sismember(answered_key, player_id):
+        if await cast(Awaitable[int], redis_client.sismember(answered_key, player_id)):
             raise AlreadyAnsweredError()
 
         # Get question
@@ -417,7 +398,7 @@ class GameService:
         await db.commit()
 
         # Mark as answered in Redis
-        await redis_client.sadd(answered_key, player_id)
+        await cast(Awaitable[int], redis_client.sadd(answered_key, player_id))
         await redis_client.expire(answered_key, 600)
 
         logger.info(
@@ -652,7 +633,7 @@ class GameService:
                 for a in answers
             ],
             time_limit_ms=question.time_limit,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(timezone.utc).isoformat(),
         )
 
 

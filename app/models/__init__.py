@@ -1,5 +1,3 @@
-"""Database models."""
-
 from app.models.game import (
     GamePlayer,
     GamePlayerAnswer,
@@ -13,18 +11,14 @@ from app.models.quiz import (
     QuizQuestion,
     Tag,
 )
-from app.models.user import AnonymousUser, User
+from app.models.user import User
 
 __all__ = [
-    # User models
     "User",
-    "AnonymousUser",
-    # Quiz models
     "Quiz",
     "QuizQuestion",
     "QuizAnswer",
     "Tag",
-    # Game models
     "GameSession",
     "GameSessionStatus",
     "GamePlayer",

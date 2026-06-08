@@ -1,13 +1,9 @@
-"""Quiz router for CRUD operations and favorites."""
-
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.auth.dependencies import get_current_user
 from app.database import get_async_db
 from app.models.user import User
-
-from .exceptions import QuizAccessDeniedError, QuizNotFoundError
+from .exceptions import QuizNotFoundError
 from .schemas import (
     FavoriteActionResponse,
     QuizCreate,
@@ -38,7 +34,7 @@ async def list_quizzes(
     db: AsyncSession = Depends(get_async_db),
 ) -> QuizListOut:
     quizzes = await quiz_service.list_quizzes(db, current_user)
-    return QuizListOut(items=quizzes)
+    return QuizListOut(items=quizzes, total=len(quizzes))
 
 
 @router.get("/{quiz_id}", response_model=QuizOut, response_model_by_alias=True)
@@ -61,14 +57,7 @@ async def update_quiz(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ) -> QuizOut:
-    quiz = await quiz_service.update_quiz(db, quiz_id, current_user, body)
-    if quiz is None:
-        # Distinguish between not found and access denied
-        existing_quiz = await quiz_service.get_quiz(db, quiz_id)
-        if existing_quiz is None:
-            raise QuizNotFoundError()
-        raise QuizAccessDeniedError()
-    return quiz
+    return await quiz_service.update_quiz(db, quiz_id, current_user, body)
 
 
 @router.delete("/{quiz_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -77,19 +66,8 @@ async def delete_quiz(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ) -> Response:
-    delete_result = await quiz_service.delete_quiz(db, quiz_id, current_user)
-    if not delete_result:
-        quiz = await quiz_service.get_quiz(db, quiz_id)
-        if quiz is None:
-            raise QuizNotFoundError()
-
-        raise QuizAccessDeniedError()
+    await quiz_service.delete_quiz(db, quiz_id, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-# =============================================================================
-# Publish / Unpublish
-# =============================================================================
 
 
 @router.post(
@@ -118,57 +96,29 @@ async def unpublish_quiz(
     return await quiz_service.unpublish_quiz(db, quiz_id, current_user)
 
 
-# =============================================================================
-# Favorites
-# =============================================================================
-
-
 @router.get("/favorites/list", response_model=QuizListOut, response_model_by_alias=True)
 async def list_favorites(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ) -> QuizListOut:
-    """List all quizzes favorited by the current user."""
     quizzes = await quiz_service.list_favorites(db, current_user)
-    return QuizListOut(items=quizzes)
+    return QuizListOut(items=quizzes, total=len(quizzes))
 
 
 @router.post(
-    "/{quiz_id}/favorite",
+    "/{quiz_id}/favorite/toggle",
     response_model=FavoriteActionResponse,
     response_model_by_alias=True,
 )
-async def add_favorite(
+async def toggle_favorite(
     quiz_id: QuizId,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ) -> FavoriteActionResponse:
-    """Add a quiz to favorites."""
-    result = await quiz_service.add_favorite(db, quiz_id, current_user)
+    result = await quiz_service.toggle_favorite(db, quiz_id, current_user)
     if result is None:
         raise QuizNotFoundError()
     return result
-
-
-@router.delete(
-    "/{quiz_id}/favorite",
-    response_model=FavoriteActionResponse,
-    response_model_by_alias=True,
-)
-async def remove_favorite(
-    quiz_id: QuizId,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db),
-) -> FavoriteActionResponse:
-    result = await quiz_service.remove_favorite(db, quiz_id, current_user)
-    if result is None:
-        raise QuizNotFoundError()
-    return result
-
-
-# =============================================================================
-# Stats
-# =============================================================================
 
 
 @router.get(

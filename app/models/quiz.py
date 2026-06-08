@@ -1,26 +1,17 @@
-"""Quiz-related database models."""
-
 import uuid
+from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import (
-    UUID,
-    Boolean,
-    Column,
-    DateTime,
-    Enum,
-    ForeignKey,
-    Integer,
-    Table,
-    VARCHAR,
-)
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy import UUID, DateTime, ForeignKey, Integer, Table, VARCHAR, Column, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.quiz.schemas import QuizStatus, QuizVisibility
 
+if TYPE_CHECKING:
+    from app.models.user import User
 
-# Many-to-many association table for Quiz <-> Tag
+
 quiz_tags = Table(
     "quiz_tags",
     Base.metadata,
@@ -28,7 +19,6 @@ quiz_tags = Table(
     Column("tag_id", UUID, ForeignKey("tags.tag_id"), primary_key=True),
 )
 
-# Many-to-many association table for User <-> Quiz favorites
 quiz_favorites = Table(
     "quiz_favorites",
     Base.metadata,
@@ -46,65 +36,50 @@ quiz_favorites = Table(
 
 
 class Tag(Base):
-    """Tags for categorizing quizzes."""
-
     __tablename__ = "tags"
 
-    tag_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
+    tag_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
     )
-    name = Column(VARCHAR(30), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(VARCHAR(30), unique=True, index=True)
 
-    quizzes = relationship("Quiz", secondary=quiz_tags, back_populates="tags")
+    quizzes: Mapped[list["Quiz"]] = relationship(
+        "Quiz", secondary=quiz_tags, back_populates="tags"
+    )
 
 
 class Quiz(Base):
     __tablename__ = "quizzes"
 
-    quiz_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
+    quiz_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
     )
-    creator_id = Column(UUID, ForeignKey("users.id"), nullable=False)
-    creator = relationship("User", back_populates="quizzes")
+    creator_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
 
-    title = Column(VARCHAR(50), nullable=False)
-    description = Column(VARCHAR(300), nullable=True)
+    title: Mapped[str] = mapped_column(VARCHAR(50))
+    description: Mapped[str | None] = mapped_column(VARCHAR(300))
 
-    # Settings (randomize_questions, randomize_answers, show_immediate_feedback moved to room/session level)
-    default_time_per_question = Column(
-        Integer, default=30_000
-    )  # UI preset, milliseconds
-    visibility = Column(
-        Enum(QuizVisibility, name="quiz_visibility"),
-        nullable=False,
-        default=QuizVisibility.public,
+    default_time_per_question: Mapped[int] = mapped_column(Integer, default=30_000)
+    visibility: Mapped[QuizVisibility] = mapped_column(default=QuizVisibility.public)
+    status: Mapped[QuizStatus] = mapped_column(default=QuizStatus.draft)
+    max_participants: Mapped[int | None] = mapped_column(Integer)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), onupdate=func.now()
     )
-    status = Column(
-        Enum(QuizStatus, name="quiz_status"),
-        nullable=False,
-        default=QuizStatus.draft,
-    )
-    max_participants = Column(Integer, nullable=True)
 
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-
-    questions = relationship(
+    creator: Mapped["User"] = relationship("User", back_populates="quizzes")
+    questions: Mapped[list["QuizQuestion"]] = relationship(
         "QuizQuestion",
         back_populates="quiz",
         cascade="all, delete-orphan",
         order_by="QuizQuestion.position",
     )
-    tags = relationship("Tag", secondary=quiz_tags, back_populates="quizzes")
-    favorited_by = relationship(
+    tags: Mapped[list["Tag"]] = relationship(
+        "Tag", secondary=quiz_tags, back_populates="quizzes"
+    )
+    favorited_by: Mapped[list["User"]] = relationship(
         "User", secondary="quiz_favorites", back_populates="favorite_quizzes"
     )
 
@@ -112,24 +87,18 @@ class Quiz(Base):
 class QuizQuestion(Base):
     __tablename__ = "quiz_questions"
 
-    question_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
+    question_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
     )
-    quiz_id = Column(UUID, ForeignKey("quizzes.quiz_id"), nullable=False, index=True)
-    text = Column(VARCHAR(255), nullable=False)
-    position = Column(
-        Integer, nullable=False, default=1
-    )  # For drag & drop ordering (1-indexed)
-    time_limit = Column(
-        Integer, nullable=False, default=30_000
-    )  # Per-question time in ms
+    quiz_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("quizzes.quiz_id"), index=True
+    )
+    text: Mapped[str] = mapped_column(VARCHAR(255))
+    position: Mapped[int] = mapped_column(Integer, default=1)
+    time_limit: Mapped[int] = mapped_column(Integer, default=30_000)
 
-    quiz = relationship("Quiz", back_populates="questions")
-    answers = relationship(
+    quiz: Mapped["Quiz"] = relationship("Quiz", back_populates="questions")
+    answers: Mapped[list["QuizAnswer"]] = relationship(
         "QuizAnswer",
         back_populates="question",
         cascade="all, delete-orphan",
@@ -140,21 +109,15 @@ class QuizQuestion(Base):
 class QuizAnswer(Base):
     __tablename__ = "quiz_answers"
 
-    answer_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
+    answer_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
     )
-    question_id = Column(
-        UUID,
-        ForeignKey("quiz_questions.question_id", name="fk_answer_question"),
-        nullable=False,
+    question_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("quiz_questions.question_id", name="fk_answer_question")
     )
-    text = Column(VARCHAR(255), nullable=False)
-    is_correct = Column(Boolean, default=False, nullable=False)
+    text: Mapped[str] = mapped_column(VARCHAR(255))
+    is_correct: Mapped[bool] = mapped_column(default=False)
 
-    question = relationship(
+    question: Mapped["QuizQuestion"] = relationship(
         "QuizQuestion", back_populates="answers", foreign_keys=[question_id]
     )

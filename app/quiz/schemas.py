@@ -1,5 +1,3 @@
-"""Quiz module schemas for API requests and responses."""
-
 from datetime import datetime
 from enum import Enum
 
@@ -8,35 +6,63 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .exceptions import InvalidQuizDataError
 from .types import AnswerId, QuestionId, QuizId
 
-# Validation constants
 MAX_TITLE_LENGTH = 50
 MAX_DESCRIPTION_LENGTH = 300
 MAX_TAG_LENGTH = 30
 MAX_TAGS_PER_QUIZ = 5
 
-# Settings defaults
 DEFAULT_MAX_PARTICIPANTS = 5
 MAX_PARTICIPANTS_LIMIT = 30
-DEFAULT_TIME_PER_QUESTION_MS = 30_000  # milliseconds
+DEFAULT_TIME_PER_QUESTION_MS = 30_000
 
 
 class QuizVisibility(str, Enum):
-    """Quiz visibility options."""
-
     private = "private"
     public = "public"
 
 
 class QuizStatus(str, Enum):
-    """Quiz lifecycle status."""
-
     draft = "draft"
     published = "published"
 
 
-class QuizAnswerCreate(BaseModel):
-    """Schema for creating a quiz answer."""
+def _validate_title(v: str | None) -> str | None:
+    if v is None:
+        return None
+    if not v.strip():
+        raise InvalidQuizDataError("Quiz title cannot be empty")
+    if len(v) > MAX_TITLE_LENGTH:
+        raise InvalidQuizDataError(
+            f"Quiz title must not exceed {MAX_TITLE_LENGTH} characters"
+        )
+    return v.strip()
 
+
+def _validate_description(v: str | None) -> str | None:
+    if v is None:
+        return None
+    if len(v) > MAX_DESCRIPTION_LENGTH:
+        raise InvalidQuizDataError(
+            f"Quiz description must not exceed {MAX_DESCRIPTION_LENGTH} characters"
+        )
+    return v
+
+
+def _validate_tags(v: list[str] | None) -> list[str] | None:
+    if v is None:
+        return None
+    validated = []
+    for tag in v:
+        tag = tag.strip().lower()
+        if tag and len(tag) <= MAX_TAG_LENGTH:
+            validated.append(tag)
+    unique_tags = list(set(validated))
+    if len(unique_tags) > MAX_TAGS_PER_QUIZ:
+        raise InvalidQuizDataError(f"Maximum {MAX_TAGS_PER_QUIZ} tags allowed per quiz")
+    return unique_tags
+
+
+class QuizAnswerCreate(BaseModel):
     text: str
     is_correct: bool = Field(
         default=False, serialization_alias="isCorrect", validation_alias="isCorrect"
@@ -49,11 +75,10 @@ class QuizQuestionCreate(BaseModel):
     text: str
     time_limit: int = Field(
         default=DEFAULT_TIME_PER_QUESTION_MS,
-        ge=5000,  # Minimum 5 seconds
-        le=300000,  # Maximum 5 minutes
+        ge=5000,
+        le=300000,
         serialization_alias="timeLimit",
         validation_alias="timeLimit",
-        description="Time limit for this question in milliseconds",
     )
     answers: list[QuizAnswerCreate]
 
@@ -65,7 +90,6 @@ class QuizSettingsCreate(BaseModel):
         default=DEFAULT_TIME_PER_QUESTION_MS,
         serialization_alias="defaultTimePerQuestion",
         validation_alias="defaultTimePerQuestion",
-        description="Default time per question in milliseconds (UI preset for new questions)",
     )
     visibility: QuizVisibility = QuizVisibility.public
     max_participants: int = Field(
@@ -89,39 +113,20 @@ class QuizCreate(BaseModel):
     @field_validator("title")
     @classmethod
     def validate_title(cls, v: str) -> str:
-        if not v or not v.strip():
+        result = _validate_title(v)
+        if result is None:
             raise InvalidQuizDataError("Quiz title is required")
-        if len(v) > MAX_TITLE_LENGTH:
-            raise InvalidQuizDataError(
-                f"Quiz title must not exceed {MAX_TITLE_LENGTH} characters"
-            )
-        return v.strip()
+        return result
 
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        if len(v) > MAX_DESCRIPTION_LENGTH:
-            raise InvalidQuizDataError(
-                f"Quiz description must not exceed {MAX_DESCRIPTION_LENGTH} characters"
-            )
-        return v
+        return _validate_description(v)
 
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: list[str]) -> list[str]:
-        validated = []
-        for tag in v:
-            tag = tag.strip().lower()
-            if tag and len(tag) <= MAX_TAG_LENGTH:
-                validated.append(tag)
-        unique_tags = list(set(validated))
-        if len(unique_tags) > MAX_TAGS_PER_QUIZ:
-            raise InvalidQuizDataError(
-                f"Maximum {MAX_TAGS_PER_QUIZ} tags allowed per quiz"
-            )
-        return unique_tags
+        return _validate_tags(v) or []
 
 
 class QuizUpdate(BaseModel):
@@ -134,43 +139,17 @@ class QuizUpdate(BaseModel):
     @field_validator("title")
     @classmethod
     def validate_title(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        if not v.strip():
-            raise InvalidQuizDataError("Quiz title cannot be empty")
-        if len(v) > MAX_TITLE_LENGTH:
-            raise InvalidQuizDataError(
-                f"Quiz title must not exceed {MAX_TITLE_LENGTH} characters"
-            )
-        return v.strip()
+        return _validate_title(v)
 
     @field_validator("description")
     @classmethod
     def validate_description(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        if len(v) > MAX_DESCRIPTION_LENGTH:
-            raise InvalidQuizDataError(
-                f"Quiz description must not exceed {MAX_DESCRIPTION_LENGTH} characters"
-            )
-        return v
+        return _validate_description(v)
 
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: list[str] | None) -> list[str] | None:
-        if v is None:
-            return None
-        validated = []
-        for tag in v:
-            tag = tag.strip().lower()
-            if tag and len(tag) <= MAX_TAG_LENGTH:
-                validated.append(tag)
-        unique_tags = list(set(validated))
-        if len(unique_tags) > MAX_TAGS_PER_QUIZ:
-            raise InvalidQuizDataError(
-                f"Maximum {MAX_TAGS_PER_QUIZ} tags allowed per quiz"
-            )
-        return unique_tags
+        return _validate_tags(v)
 
 
 class QuizAnswerOut(BaseModel):
@@ -208,18 +187,17 @@ class QuizOut(BaseModel):
     status: QuizStatus
     settings: QuizSettingsOut
     questions: list[QuizQuestionOut]
-    estimated_time: int = Field(
-        serialization_alias="estimatedTime",
-        description="Estimated time to complete the quiz in milliseconds",
-    )
+    estimated_time: int = Field(serialization_alias="estimatedTime")
     created_at: datetime = Field(serialization_alias="createdAt")
     updated_at: datetime = Field(serialization_alias="updatedAt")
+    is_favorited: bool = Field(default=False, serialization_alias="isFavorited")
 
     model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 
 
 class QuizListOut(BaseModel):
     items: list[QuizOut]
+    total: int
 
 
 class FavoriteActionResponse(BaseModel):

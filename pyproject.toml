@@ -36,12 +36,12 @@ dev = [
     "pytest-asyncio",
     "pre-commit>=4.5.1",
     "types-passlib>=1.7.7",
-    "types-pyjwt>=1.7.1",
 ]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
 exclude = "^alembic/"
 show_error_context = true
 show_error_codes = true

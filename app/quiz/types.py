@@ -1,5 +1,3 @@
-"""Quiz module type definitions."""
-
 from typing import NewType
 
 # Branded types for Quiz-related IDs - provide compile-time type safety
