@@ -22,12 +22,6 @@ services:
     volumes:
       - redis_data:/data
 
-  adminer:
-    image: adminer
-    restart: always
-    ports:
-      - "8080:8080"
-
   api:
     build: .
     container_name: askit_api
