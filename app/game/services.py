@@ -21,6 +21,7 @@ from app.user.schemas import GameHistoryItem, GameHistoryOut
 from .exceptions import (
     AlreadyAnsweredError,
     GameAlreadyStartedError,
+    HostCannotJoinError,
     NicknameAlreadyTakenError,
     NotHostError,
     QuestionNotActiveError,
@@ -49,25 +50,16 @@ PREV_RANKING_KEY = "game:prev_ranking:{room_code}"
 # Scoring constants
 MAX_POINTS_PER_QUESTION = 1000
 MIN_POINTS_PER_QUESTION = 100
-SPEED_BONUS_FACTOR = 0.5  # Faster answers get more points
 
 
 def calculate_score(time_taken_ms: int, time_limit_ms: int, is_correct: bool) -> int:
     if not is_correct:
         return 0
 
-    # Calculate time factor (1.0 = instant, 0.0 = at time limit)
-    time_factor = max(0, 1 - (time_taken_ms / time_limit_ms))
+    time_factor = max(0.0, 1.0 - (time_taken_ms / time_limit_ms))
+    speed_bonus = int((MAX_POINTS_PER_QUESTION - MIN_POINTS_PER_QUESTION) * time_factor)
 
-    # Base points + speed bonus
-    base_points = MIN_POINTS_PER_QUESTION
-    speed_bonus = int(
-        (MAX_POINTS_PER_QUESTION - MIN_POINTS_PER_QUESTION)
-        * time_factor
-        * SPEED_BONUS_FACTOR
-    )
-
-    return base_points + speed_bonus
+    return MIN_POINTS_PER_QUESTION + speed_bonus
 
 
 @frozen
@@ -144,8 +136,11 @@ class GameService:
             .where(GameSession.room_code == room_code.upper())
             .options(
                 selectinload(GameSession.players),
-                selectinload(GameSession.quiz).selectinload(Quiz.questions),
+                selectinload(GameSession.quiz)
+                .selectinload(Quiz.questions)
+                .selectinload(QuizQuestion.answers),
             )
+            .execution_options(populate_existing=True)
         )
         session: GameSession | None = result.scalars().first()
         return session
@@ -165,6 +160,9 @@ class GameService:
 
         if session.status != GameSessionStatus.waiting:
             raise GameAlreadyStartedError()
+
+        if user is not None and session.host_id == user.id:
+            raise HostCannotJoinError()
 
         # Check max participants
         quiz = session.quiz
@@ -597,6 +595,18 @@ class GameService:
 
         question_count = len(session.quiz.questions)
 
+        current_question: WSQuestion | None = None
+        if session.status in (GameSessionStatus.question, GameSessionStatus.revealing):
+            question = await self.get_current_question(db, room_code)
+            if question is not None:
+                current_question = await self.build_question_message(
+                    question,
+                    session.current_question_index,
+                    question_count,
+                    room_code=room_code,
+                    randomize_answers=session.randomize_answers,
+                )
+
         return WSRoomState(
             session_id=str(session.session_id),
             room_code=session.room_code,
@@ -606,6 +616,7 @@ class GameService:
             quiz_title=session.quiz.title,
             total_questions=question_count,
             current_question_index=session.current_question_index,
+            current_question=current_question,
         )
 
     async def build_question_message(
@@ -613,12 +624,21 @@ class GameService:
         question: QuizQuestion,
         question_index: int,
         total_questions: int,
+        room_code: str,
         randomize_answers: bool = False,
     ) -> WSQuestion:
         """Build question message for players."""
         answers = list(question.answers)
         if randomize_answers:
             random.shuffle(answers)
+
+        redis_client = get_redis_client()
+        question_start = await redis_client.get(
+            QUESTION_START_KEY.format(room_code=room_code)
+        )
+        started_at = (
+            question_start if question_start else datetime.now(timezone.utc).isoformat()
+        )
 
         return WSQuestion(
             question_index=question_index,
@@ -633,7 +653,8 @@ class GameService:
                 for a in answers
             ],
             time_limit_ms=question.time_limit,
-            started_at=datetime.now(timezone.utc).isoformat(),
+            started_at=started_at,
+            allow_multiple_answers=sum(1 for a in answers if a.is_correct) > 1,
         )
 
 

@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
 
@@ -74,11 +75,6 @@ class WSMessageType(str, Enum):
     HOST_ANSWER_UPDATE = "host_answer_update"
 
 
-class WSMessage(BaseModel):
-    type: WSMessageType
-    payload: dict[str, object] = Field(default_factory=dict)
-
-
 class WSError(BaseModel):
     code: str
     message: str
@@ -96,7 +92,7 @@ class WSPlayerLeft(BaseModel):
 
 
 class WSGameStarting(BaseModel):
-    countdown_seconds: int = Field(serialization_alias="countdownSeconds")
+    countdown_ms: int = Field(serialization_alias="countdownMs")
     total_questions: int = Field(serialization_alias="totalQuestions")
 
     model_config = {"populate_by_name": True}
@@ -117,6 +113,9 @@ class WSQuestion(BaseModel):
     answers: list[WSAnswerOption]
     time_limit_ms: int = Field(serialization_alias="timeLimitMs")
     started_at: str = Field(serialization_alias="startedAt")
+    allow_multiple_answers: bool = Field(
+        default=False, serialization_alias="allowMultipleAnswers"
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -130,6 +129,25 @@ class WSAnswerSubmit(BaseModel):
     )
 
     model_config = {"populate_by_name": True}
+
+
+class StartGameMessage(BaseModel):
+    type: Literal[WSMessageType.START_GAME]
+
+
+class NextQuestionMessage(BaseModel):
+    type: Literal[WSMessageType.NEXT_QUESTION]
+
+
+class AnswerClientMessage(BaseModel):
+    type: Literal[WSMessageType.ANSWER]
+    payload: WSAnswerSubmit
+
+
+ClientMessage = Annotated[
+    Union[StartGameMessage, NextQuestionMessage, AnswerClientMessage],
+    Field(discriminator="type"),
+]
 
 
 class WSAnswerResult(BaseModel):
@@ -154,6 +172,7 @@ class WSQuestionEnded(BaseModel):
         default_factory=dict,
         serialization_alias="answerDistribution",
     )
+    leaderboard: list["WSLeaderboardEntry"] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
 
@@ -191,6 +210,7 @@ class WSHostAnswerUpdate(BaseModel):
     is_correct: bool = Field(serialization_alias="isCorrect")
     answer_ids: list[str] = Field(serialization_alias="answerIds")
     time_taken_ms: int = Field(serialization_alias="timeTakenMs")
+    total_score: int = Field(serialization_alias="totalScore")
 
     model_config = {"populate_by_name": True}
 
@@ -204,5 +224,8 @@ class WSRoomState(BaseModel):
     quiz_title: str = Field(serialization_alias="quizTitle")
     total_questions: int = Field(serialization_alias="totalQuestions")
     current_question_index: int = Field(serialization_alias="currentQuestionIndex")
+    current_question: WSQuestion | None = Field(
+        default=None, serialization_alias="currentQuestion"
+    )
 
     model_config = {"populate_by_name": True}

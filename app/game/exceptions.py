@@ -59,28 +59,6 @@ class NicknameAlreadyTakenError(AppException):
         )
 
 
-class InvalidRoomCodeError(AppException):
-    """Invalid room code format."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            error_code="INVALID_ROOM_CODE",
-            message="Invalid room code",
-            status_code=status.HTTP_400_BAD_REQUEST,
-        )
-
-
-class PlayerNotFoundError(AppException):
-    """Player not found in the game."""
-
-    def __init__(self) -> None:
-        super().__init__(
-            error_code="PLAYER_NOT_FOUND",
-            message="Player not found in this game",
-            status_code=status.HTTP_404_NOT_FOUND,
-        )
-
-
 class QuestionNotActiveError(AppException):
     """No question is currently active."""
 
@@ -89,6 +67,17 @@ class QuestionNotActiveError(AppException):
             error_code="QUESTION_NOT_ACTIVE",
             message="No question is currently active",
             status_code=status.HTTP_409_CONFLICT,
+        )
+
+
+class HostCannotJoinError(AppException):
+    """The host cannot join their own game as a player."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            error_code="HOST_CANNOT_JOIN",
+            message="You cannot join your own game as a player",
+            status_code=status.HTTP_403_FORBIDDEN,
         )
 
 

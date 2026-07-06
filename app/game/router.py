@@ -9,6 +9,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from pydantic import TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user, get_optional_current_user
@@ -26,11 +27,14 @@ from app.user.types import UserId
 from .connection_manager import connection_manager
 from .exceptions import AlreadyAnsweredError, QuestionNotActiveError, RoomNotFoundError
 from .schemas import (
+    AnswerClientMessage,
+    ClientMessage,
     CreateRoomRequest,
     JoinRoomRequest,
+    NextQuestionMessage,
     PlayerInfo,
     RoomResponse,
-    WSAnswerSubmit,
+    StartGameMessage,
     WSGameFinished,
     WSGameStarting,
     WSHostAnswerUpdate,
@@ -43,6 +47,8 @@ from .schemas import (
 from .services import game_service
 
 logger = get_logger(__name__)
+
+client_message_adapter: TypeAdapter[ClientMessage] = TypeAdapter(ClientMessage)
 
 router = APIRouter(tags=["Game"])
 ws_router = APIRouter(tags=["WebSocket"])
@@ -268,16 +274,12 @@ async def handle_player_message(
     data: dict[str, object],
 ) -> None:
     try:
-        message_type = data.get("type")
-        raw_payload = data.get("payload", {})
-        payload: dict[str, object] = (
-            raw_payload if isinstance(raw_payload, dict) else {}
-        )
+        message = client_message_adapter.validate_python(data)
 
-        if message_type == WSMessageType.ANSWER.value:
-            await handle_answer(db, room_code, player_id, payload)
+        if isinstance(message, AnswerClientMessage):
+            await handle_answer(db, room_code, player_id, message)
         else:
-            logger.warning("unknown_player_message_type", type=message_type)
+            logger.warning("unknown_player_message_type", type=data.get("type"))
 
     except Exception as e:
         logger.error("player_message_handler_error", error=str(e))
@@ -300,16 +302,14 @@ async def handle_host_message(
     data: dict[str, object],
 ) -> None:
     try:
-        message_type = data.get("type")
+        message = client_message_adapter.validate_python(data)
 
-        if message_type == WSMessageType.START_GAME.value:
+        if isinstance(message, StartGameMessage):
             await handle_start_game(db, room_code, host_user)
-
-        elif message_type == WSMessageType.NEXT_QUESTION.value:
+        elif isinstance(message, NextQuestionMessage):
             await handle_next_question(db, room_code)
-
         else:
-            logger.warning("unknown_host_message_type", type=message_type)
+            logger.warning("unknown_host_message_type", type=data.get("type"))
 
     except Exception as e:
         logger.error("host_message_handler_error", error=str(e))
@@ -328,19 +328,21 @@ async def handle_host_message(
 async def handle_start_game(db: AsyncSession, room_code: str, host_user: User) -> None:
     questions = await game_service.start_game(db, room_code, host_user)
 
-    await connection_manager.broadcast_to_room(
-        room_code,
-        {
-            "type": WSMessageType.GAME_STARTING.value,
-            "payload": WSGameStarting(
-                countdown_seconds=3,
-                total_questions=len(questions),
-            ).model_dump(by_alias=True),
-        },
-    )
+    total_questions = len(questions)
+    for ms in (3000, 2000, 1000):
+        await connection_manager.broadcast_to_room(
+            room_code,
+            {
+                "type": WSMessageType.GAME_STARTING.value,
+                "payload": WSGameStarting(
+                    countdown_ms=ms,
+                    total_questions=total_questions,
+                ).model_dump(by_alias=True),
+            },
+        )
+        await asyncio.sleep(1)
 
-    await asyncio.sleep(3)
-    await send_question(db, room_code, 1, len(questions))
+    await send_question(db, room_code, 1, total_questions)
 
 
 async def handle_next_question(db: AsyncSession, room_code: str) -> None:
@@ -348,42 +350,54 @@ async def handle_next_question(db: AsyncSession, room_code: str) -> None:
     if session is None:
         return
 
-    question_count = len(session.quiz.questions)
-    next_index = session.current_question_index + 1
-
-    if next_index > question_count:
-        await end_game(db, room_code)
-    else:
+    if session.status == GameSessionStatus.question:
+        question = await game_service.get_current_question(db, room_code)
+        if question is None:
+            return
+        session.status = GameSessionStatus.revealing
+        await db.commit()
+        correct_ids = [str(a.answer_id) for a in question.answers if a.is_correct]
+        distribution = await game_service.compute_answer_distribution(
+            db, session.session_id, question
+        )
         leaderboard = await game_service.get_leaderboard(db, room_code)
         await connection_manager.broadcast_to_room(
             room_code,
             {
-                "type": WSMessageType.LEADERBOARD.value,
-                "payload": {
-                    "entries": [e.model_dump(by_alias=True) for e in leaderboard],
-                    "questionIndex": session.current_question_index,
-                },
+                "type": WSMessageType.QUESTION_ENDED.value,
+                "payload": WSQuestionEnded(
+                    question_id=str(question.question_id),
+                    correct_answer_ids=correct_ids,
+                    answer_distribution=distribution,
+                    leaderboard=leaderboard,
+                ).model_dump(by_alias=True),
             },
         )
+        return
 
-        await asyncio.sleep(5)
-        await send_question(db, room_code, next_index, question_count)
+    if session.status != GameSessionStatus.revealing:
+        return
+    question_count = len(session.quiz.questions)
+    next_index = session.current_question_index + 1
+    if next_index > question_count:
+        await end_game(db, room_code)
+        return
+    await send_question(db, room_code, next_index, question_count)
 
 
 async def handle_answer(
     db: AsyncSession,
     room_code: str,
     player_id: str,
-    payload: dict[str, object],
+    message: AnswerClientMessage,
 ) -> None:
     try:
-        answer_data = WSAnswerSubmit.model_validate(payload)
         result = await game_service.submit_answer(
             db,
             room_code,
             player_id,
-            answer_data.question_id,
-            answer_data.answer_ids,
+            message.payload.question_id,
+            message.payload.answer_ids,
         )
 
         session = await game_service.get_room(db, room_code)
@@ -420,14 +434,25 @@ async def handle_answer(
                             player_id=player_id,
                             nickname=player.nickname,
                             is_correct=result.is_correct,
-                            answer_ids=answer_data.answer_ids,
+                            answer_ids=message.payload.answer_ids,
                             time_taken_ms=result.time_taken_ms,
+                            total_score=player.score,
                         ).model_dump(by_alias=True),
                     },
                 )
 
     except (AlreadyAnsweredError, QuestionNotActiveError) as e:
         logger.warning("answer_ignored", reason=type(e).__name__, player_id=player_id)
+        await connection_manager.send_to_player(
+            player_id,
+            {
+                "type": WSMessageType.ERROR.value,
+                "payload": {
+                    "code": e.error_code,
+                    "message": e.message,
+                },
+            },
+        )
     except Exception as e:
         logger.error("answer_handler_error", error=str(e))
         await connection_manager.send_to_player(
@@ -460,6 +485,7 @@ async def send_question(
         question,
         question_index,
         total_questions,
+        room_code=room_code,
         randomize_answers=session.randomize_answers if session else False,
     )
 
@@ -501,6 +527,7 @@ async def question_timeout(
             db, session.session_id, question
         )
 
+        leaderboard = await game_service.get_leaderboard(db, room_code)
         await connection_manager.broadcast_to_room(
             room_code,
             {
@@ -509,6 +536,7 @@ async def question_timeout(
                     question_id=str(question.question_id),
                     correct_answer_ids=correct_ids,
                     answer_distribution=distribution,
+                    leaderboard=leaderboard,
                 ).model_dump(by_alias=True),
             },
         )
