@@ -225,7 +225,7 @@ async def test_leaderboard_change_tracking(db: AsyncSession) -> None:
         quiz_id=quiz.quiz_id,
         host_id=user.id,
         room_code="TSTRK",
-        status=GameSessionStatus.leaderboard,
+        status=GameSessionStatus.revealing,
     )
     db.add(session)
     await db.flush()

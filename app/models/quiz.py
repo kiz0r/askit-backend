@@ -2,7 +2,17 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import UUID, DateTime, ForeignKey, Integer, Table, VARCHAR, Column, func
+from sqlalchemy import (
+    UUID,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    Table,
+    VARCHAR,
+    Column,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -60,8 +70,14 @@ class Quiz(Base):
     description: Mapped[str | None] = mapped_column(VARCHAR(300))
 
     default_time_per_question: Mapped[int] = mapped_column(Integer, default=30_000)
-    visibility: Mapped[QuizVisibility] = mapped_column(default=QuizVisibility.public)
-    status: Mapped[QuizStatus] = mapped_column(default=QuizStatus.draft)
+    visibility: Mapped[QuizVisibility] = mapped_column(
+        Enum(QuizVisibility, native_enum=False),
+        default=QuizVisibility.public,
+    )
+    status: Mapped[QuizStatus] = mapped_column(
+        Enum(QuizStatus, native_enum=False),
+        default=QuizStatus.draft,
+    )
     max_participants: Mapped[int | None] = mapped_column(Integer)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
@@ -96,6 +112,7 @@ class QuizQuestion(Base):
     text: Mapped[str] = mapped_column(VARCHAR(255))
     position: Mapped[int] = mapped_column(Integer, default=1)
     time_limit: Mapped[int] = mapped_column(Integer, default=30_000)
+    allow_multiple_answers: Mapped[bool] = mapped_column(default=False)
 
     quiz: Mapped["Quiz"] = relationship("Quiz", back_populates="questions")
     answers: Mapped[list["QuizAnswer"]] = relationship(

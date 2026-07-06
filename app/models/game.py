@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, VARCHAR, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, VARCHAR, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -24,7 +24,6 @@ class GameSessionStatus(str, enum.Enum):
     starting = "starting"
     question = "question"
     revealing = "revealing"
-    leaderboard = "leaderboard"
     finished = "finished"
 
 
@@ -45,7 +44,10 @@ class GameSession(Base):
     randomize_answers: Mapped[bool] = mapped_column(default=False)
     show_immediate_feedback: Mapped[bool] = mapped_column(default=True)
 
-    status: Mapped[GameSessionStatus] = mapped_column(default=GameSessionStatus.waiting)
+    status: Mapped[GameSessionStatus] = mapped_column(
+        Enum(GameSessionStatus, native_enum=False),
+        default=GameSessionStatus.waiting,
+    )
     current_question_index: Mapped[int] = mapped_column(Integer, default=0)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
