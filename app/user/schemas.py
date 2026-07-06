@@ -48,11 +48,11 @@ class UserUpdate(BaseModel):
 
 class PasswordChange(BaseModel):
     current_password: str = Field(validation_alias="currentPassword")
-    new_password: str = Field(validation_alias="newPassword")
+    next_password: str = Field(validation_alias="nextPassword")
 
-    @field_validator("new_password")
+    @field_validator("next_password")
     @classmethod
-    def new_password_valid(cls, v: str) -> str:
+    def next_password_valid(cls, v: str) -> str:
         return AuthValidators.validate_password(v)
 
     model_config = {"populate_by_name": True}

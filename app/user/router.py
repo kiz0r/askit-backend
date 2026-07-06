@@ -43,7 +43,7 @@ async def change_password(
     db: AsyncSession = Depends(get_async_db),
 ) -> MessageResponse:
     await user_service.change_password(
-        db, current_user, data.current_password, data.new_password
+        db, current_user, data.current_password, data.next_password
     )
     return MessageResponse(message="OK")
 

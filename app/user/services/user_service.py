@@ -80,11 +80,11 @@ class UserService:
         return self.user_to_response(user)
 
     async def change_password(
-        self, db: AsyncSession, user: User, current_password: str, new_password: str
+        self, db: AsyncSession, user: User, current_password: str, next_password: str
     ) -> None:
         if not password_service.verify_password(current_password, user.password_hash):
             raise InvalidCredentialsError()
-        user.password_hash = password_service.hash_password(new_password)
+        user.password_hash = password_service.hash_password(next_password)
         await db.commit()
 
 
