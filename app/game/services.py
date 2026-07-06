@@ -2,7 +2,7 @@ import json
 import random
 from collections.abc import Awaitable
 from datetime import datetime, timezone
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID
 
 from attrs import frozen
@@ -491,54 +491,58 @@ class GameService:
         user: User,
         limit: int = 20,
         offset: int = 0,
+        role: Literal["host", "player"] | None = None,
     ) -> GameHistoryOut:
         finished = GameSessionStatus.finished
 
-        host_result = await db.execute(
-            select(GameSession)
-            .options(
-                selectinload(GameSession.quiz),
-                selectinload(GameSession.players),
-            )
-            .where(
-                GameSession.host_id == user.id,
-                GameSession.status == finished,
-            )
-        )
-        host_sessions = host_result.scalars().all()
-
-        player_result = await db.execute(
-            select(GamePlayer)
-            .options(
-                selectinload(GamePlayer.session).selectinload(GameSession.quiz),
-                selectinload(GamePlayer.session).selectinload(GameSession.players),
-            )
-            .join(GameSession, GamePlayer.session_id == GameSession.session_id)
-            .where(
-                GamePlayer.user_id == user.id,
-                GameSession.status == finished,
-            )
-        )
-        player_entries = player_result.scalars().all()
-
         items: list[GameHistoryItem] = []
 
-        for session in host_sessions:
-            items.append(
-                GameHistoryItem(
-                    session_id=str(session.session_id),
-                    room_code=str(session.room_code),
-                    quiz_id=str(session.quiz_id),
-                    quiz_title=str(session.quiz.title),
-                    role="host",
-                    score=None,
-                    rank=None,
-                    total_players=len(session.players),
-                    started_at=session.started_at,
-                    ended_at=session.ended_at,
-                    status=str(session.status.value),
+        if role != "player":
+            host_result = await db.execute(
+                select(GameSession)
+                .options(
+                    selectinload(GameSession.quiz),
+                    selectinload(GameSession.players),
+                )
+                .where(
+                    GameSession.host_id == user.id,
+                    GameSession.status == finished,
                 )
             )
+            host_sessions = host_result.scalars().all()
+
+            for session in host_sessions:
+                items.append(
+                    GameHistoryItem(
+                        session_id=str(session.session_id),
+                        room_code=str(session.room_code),
+                        quiz_id=str(session.quiz_id),
+                        quiz_title=str(session.quiz.title),
+                        role="host",
+                        score=None,
+                        rank=None,
+                        total_players=len(session.players),
+                        started_at=session.started_at,
+                        ended_at=session.ended_at,
+                        status=str(session.status.value),
+                    )
+                )
+
+        player_entries: list[GamePlayer] = []
+        if role != "host":
+            player_result = await db.execute(
+                select(GamePlayer)
+                .options(
+                    selectinload(GamePlayer.session).selectinload(GameSession.quiz),
+                    selectinload(GamePlayer.session).selectinload(GameSession.players),
+                )
+                .join(GameSession, GamePlayer.session_id == GameSession.session_id)
+                .where(
+                    GamePlayer.user_id == user.id,
+                    GameSession.status == finished,
+                )
+            )
+            player_entries = list(player_result.scalars().all())
 
         for player in player_entries:
             session = player.session
@@ -569,7 +573,10 @@ class GameService:
                 )
             )
 
-        items.sort(key=lambda x: x.started_at or datetime.min, reverse=True)
+        items.sort(
+            key=lambda x: (x.started_at or datetime.min, x.session_id, x.role),
+            reverse=True,
+        )
         total = len(items)
         return GameHistoryOut(items=items[offset : offset + limit], total=total)
 

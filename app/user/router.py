@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,7 +54,8 @@ async def change_password(
 async def get_game_history(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    role: Literal["host", "player"] | None = Query(default=None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ) -> GameHistoryOut:
-    return await game_service.get_game_history(db, current_user, limit, offset)
+    return await game_service.get_game_history(db, current_user, limit, offset, role)
