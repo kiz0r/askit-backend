@@ -32,32 +32,3 @@ class AppException(Exception):
         if self.details:
             error_dict["details"] = self.details
         return error_dict
-
-
-# Generic Resource Errors (for backwards compatibility)
-class ResourceError(AppException):
-    """Base resource error."""
-
-    pass
-
-
-class ResourceNotFoundError(ResourceError):
-    """Resource not found."""
-
-    def __init__(self, resource: str = "Resource"):
-        super().__init__(
-            error_code="RESOURCE_NOT_FOUND",
-            message=f"{resource} not found",
-            status_code=status.HTTP_404_NOT_FOUND,
-        )
-
-
-class ResourceAlreadyExistsError(ResourceError):
-    """Resource already exists."""
-
-    def __init__(self, resource: str = "Resource"):
-        super().__init__(
-            error_code="RESOURCE_ALREADY_EXISTS",
-            message=f"{resource} already exists",
-            status_code=status.HTTP_409_CONFLICT,
-        )

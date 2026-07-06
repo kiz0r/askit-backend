@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.exceptions import (
     InvalidCredentialsError,
-    UserAlreadyExistsError,
+    RegistrationFailedError,
     UsernameAlreadyExistsError,
 )
 from app.auth.services.password_service import password_service
@@ -53,7 +53,7 @@ class UserService:
             error_msg = str(e.orig).lower()
             if "username" in error_msg:
                 raise UsernameAlreadyExistsError()
-            raise UserAlreadyExistsError()
+            raise RegistrationFailedError()
 
     async def get_user_by_email(self, db: AsyncSession, email: EmailStr) -> User | None:
         result: User | None = await db.scalar(select(User).where(User.email == email))

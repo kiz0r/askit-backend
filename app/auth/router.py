@@ -7,7 +7,6 @@ from app.auth.exceptions import (
     RefreshTokenMissingError,
     RegistrationFailedError,
     TokenRevokedError,
-    UserAlreadyExistsError,
     UsernameAlreadyExistsError,
 )
 from app.auth.services.auth_service import auth_service
@@ -66,7 +65,7 @@ async def register(
         created_user = await user_service.create_user(
             db, user.username, user.email, user.password
         )
-    except (UserAlreadyExistsError, UsernameAlreadyExistsError):
+    except UsernameAlreadyExistsError:
         raise RegistrationFailedError()
 
     access_token = jwt_service.create_access_token(str(created_user.id))

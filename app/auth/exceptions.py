@@ -89,14 +89,6 @@ class UserInactiveError(AuthorizationError):
         )
 
 
-class InsufficientPermissionsError(AuthorizationError):
-    def __init__(self, resource: str = "resource") -> None:
-        super().__init__(
-            error_code="INSUFFICIENT_PERMISSIONS",
-            message=f"You don't have permission to access this {resource}",
-        )
-
-
 class AuthValidationError(AppException):
     def __init__(
         self,
@@ -123,23 +115,6 @@ class InvalidUsernameError(AuthValidationError):
 class InvalidPasswordError(AuthValidationError):
     def __init__(self, message: str) -> None:
         super().__init__(error_code="INVALID_PASSWORD", message=message)
-
-
-class InvalidEmailError(AuthValidationError):
-    def __init__(self) -> None:
-        super().__init__(
-            error_code="INVALID_EMAIL",
-            message="Invalid email format",
-        )
-
-
-class UserAlreadyExistsError(AppException):
-    def __init__(self) -> None:
-        super().__init__(
-            error_code="USER_ALREADY_EXISTS",
-            message="User with this email already exists",
-            status_code=status.HTTP_409_CONFLICT,
-        )
 
 
 class UsernameAlreadyExistsError(AppException):
