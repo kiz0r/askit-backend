@@ -16,10 +16,14 @@ from .exceptions import (
 )
 from .schemas import (
     FavoriteActionResponse,
+    QuizAnswerExport,
     QuizAnswerOut,
     QuizCreate,
+    QuizExportOut,
     QuizOut,
+    QuizQuestionExport,
     QuizQuestionOut,
+    QuizSettingsExport,
     QuizSettingsOut,
     QuizStatsOut,
     QuizStatus,
@@ -265,12 +269,12 @@ class QuizService:
             raise QuizNotFoundError()
         return self.quiz_to_response(updated)
 
-    async def _set_quiz_status(
+    async def set_quiz_status(
         self,
         db: AsyncSession,
         quiz_id: QuizId,
-        user: User,
         new_status: QuizStatus,
+        user: User,
     ) -> QuizOut:
         uuid_val = self._from_quiz_id(quiz_id)
         quiz = await self._fetch_quiz(db, uuid_val)
@@ -292,16 +296,6 @@ class QuizService:
             raise QuizNotFoundError()
         return self.quiz_to_response(refreshed)
 
-    async def publish_quiz(
-        self, db: AsyncSession, quiz_id: QuizId, user: User
-    ) -> QuizOut:
-        return await self._set_quiz_status(db, quiz_id, user, QuizStatus.published)
-
-    async def unpublish_quiz(
-        self, db: AsyncSession, quiz_id: QuizId, user: User
-    ) -> QuizOut:
-        return await self._set_quiz_status(db, quiz_id, user, QuizStatus.draft)
-
     async def delete_quiz(self, db: AsyncSession, quiz_id: QuizId, user: User) -> None:
         uuid_val = self._from_quiz_id(quiz_id)
         result = await db.execute(
@@ -317,6 +311,7 @@ class QuizService:
         if quiz.creator_id != user.id:
             raise QuizAccessDeniedError()
 
+        await db.execute(delete(GameSession).where(GameSession.quiz_id == uuid_val))
         await db.delete(quiz)
         await db.commit()
 
@@ -455,6 +450,126 @@ class QuizService:
             average_duration_seconds=average_duration,
             top_players=top_players,
         )
+
+    def _compute_quiz_stats(
+        self, quiz_id: str, sessions: list[GameSession]
+    ) -> QuizStatsOut:
+        if not sessions:
+            return QuizStatsOut(
+                quiz_id=quiz_id,
+                times_played=0,
+                total_players=0,
+                average_score=0,
+                average_duration_seconds=0,
+                top_players=[],
+            )
+
+        all_players = [p for s in sessions for p in s.players]
+        total_players = len(all_players)
+        average_score = (
+            sum(p.score for p in all_players) // total_players if total_players else 0
+        )
+        durations = [
+            int((s.ended_at - s.started_at).total_seconds())
+            for s in sessions
+            if s.started_at and s.ended_at
+        ]
+        average_duration = sum(durations) // len(durations) if durations else 0
+
+        top_players = [
+            TopPlayerOut(
+                nickname=str(p.nickname),
+                score=p.score,
+                played_at=s.started_at or datetime.min,
+            )
+            for s in sessions
+            for p in s.players
+        ]
+        top_players.sort(key=lambda x: x.score, reverse=True)
+
+        return QuizStatsOut(
+            quiz_id=quiz_id,
+            times_played=len(sessions),
+            total_players=total_players,
+            average_score=average_score,
+            average_duration_seconds=average_duration,
+            top_players=top_players[:10],
+        )
+
+    async def export_quiz(
+        self, db: AsyncSession, quiz_id: QuizId, user: User
+    ) -> QuizExportOut:
+        uuid_val = self._from_quiz_id(quiz_id)
+        quiz = await self._fetch_quiz(db, uuid_val)
+        if quiz is None:
+            raise QuizNotFoundError()
+        if quiz.creator_id != user.id:
+            raise QuizAccessDeniedError()
+
+        questions = [
+            QuizQuestionExport(
+                text=q.text,
+                time_limit=q.time_limit,
+                answers=[
+                    QuizAnswerExport(text=a.text, is_correct=a.is_correct)
+                    for a in q.answers
+                ],
+            )
+            for q in sorted(quiz.questions, key=lambda x: x.position)
+        ]
+
+        return QuizExportOut(
+            title=quiz.title,
+            description=quiz.description,
+            tags=[t.name for t in quiz.tags],
+            settings=QuizSettingsExport(
+                default_time_per_question=quiz.default_time_per_question,
+                visibility=quiz.visibility,
+                max_participants=quiz.max_participants,
+            ),
+            questions=questions,
+        )
+
+    async def get_bulk_quiz_stats(
+        self,
+        db: AsyncSession,
+        quiz_ids: list[str],
+        user: User,
+    ) -> list[QuizStatsOut]:
+        if not quiz_ids:
+            return []
+
+        uuid_vals = [UUID(qid) for qid in quiz_ids]
+
+        quizzes_result = await db.execute(
+            select(Quiz).where(
+                Quiz.quiz_id.in_(uuid_vals),
+                Quiz.creator_id == user.id,
+            )
+        )
+        found_quizzes = {str(q.quiz_id): q for q in quizzes_result.scalars().all()}
+
+        sessions_result = await db.execute(
+            select(GameSession)
+            .options(selectinload(GameSession.players))
+            .where(
+                GameSession.quiz_id.in_(uuid_vals),
+                GameSession.status == GameSessionStatus.finished,
+            )
+        )
+        all_sessions = sessions_result.scalars().all()
+
+        sessions_by_quiz: dict[str, list[GameSession]] = {qid: [] for qid in quiz_ids}
+        for session in all_sessions:
+            key = str(session.quiz_id)
+            if key in sessions_by_quiz:
+                sessions_by_quiz[key].append(session)
+
+        return [
+            self._compute_quiz_stats(qid, sessions_by_quiz[qid])
+            for qid in quiz_ids
+            if qid in found_quizzes
+        ]
 
 
 # Singleton instance

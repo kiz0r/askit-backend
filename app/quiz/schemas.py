@@ -207,6 +207,16 @@ class FavoriteActionResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class SetQuizStatusInput(BaseModel):
+    status: QuizStatus
+
+
+class BulkStatsRequest(BaseModel):
+    quiz_ids: list[str] = Field(alias="quizIds")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class TopPlayerOut(BaseModel):
     nickname: str
     score: int
@@ -222,5 +232,44 @@ class QuizStatsOut(BaseModel):
     average_score: int = Field(serialization_alias="averageScore")
     average_duration_seconds: int = Field(serialization_alias="averageDurationSeconds")
     top_players: list[TopPlayerOut] = Field(serialization_alias="topPlayers")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class BulkStatsOut(BaseModel):
+    items: list[QuizStatsOut]
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class QuizAnswerExport(BaseModel):
+    text: str
+    is_correct: bool = Field(serialization_alias="isCorrect")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class QuizQuestionExport(BaseModel):
+    text: str
+    time_limit: int = Field(serialization_alias="timeLimit")
+    answers: list[QuizAnswerExport]
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class QuizSettingsExport(BaseModel):
+    default_time_per_question: int = Field(serialization_alias="defaultTimePerQuestion")
+    visibility: QuizVisibility
+    max_participants: int = Field(serialization_alias="maxParticipants")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class QuizExportOut(BaseModel):
+    title: str
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    settings: QuizSettingsExport
+    questions: list[QuizQuestionExport]
 
     model_config = ConfigDict(populate_by_name=True)
