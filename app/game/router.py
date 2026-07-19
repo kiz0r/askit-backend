@@ -1,5 +1,4 @@
 import asyncio
-from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import (
@@ -37,7 +36,6 @@ from .schemas import (
     PlayerInfo,
     RoomResponse,
     StartGameMessage,
-    WSGameFinished,
     WSGameStarting,
     WSHostAnswerUpdate,
     WSMessageType,
@@ -169,6 +167,17 @@ async def websocket_player_endpoint(
             },
         )
 
+    if session.status == GameSessionStatus.finished:
+        finished = await game_service.build_game_finished(db, room_code)
+        if finished:
+            await connection_manager.send_to_player(
+                player_id,
+                {
+                    "type": WSMessageType.GAME_FINISHED.value,
+                    "payload": finished.model_dump(by_alias=True),
+                },
+            )
+
     await connection_manager.broadcast_to_room(
         room_code,
         {
@@ -273,6 +282,17 @@ async def websocket_host_endpoint(
                 "payload": room_state.model_dump(by_alias=True),
             },
         )
+
+    if session.status == GameSessionStatus.finished:
+        finished = await game_service.build_game_finished(db, room_code)
+        if finished:
+            await connection_manager.send_to_host(
+                room_code,
+                {
+                    "type": WSMessageType.GAME_FINISHED.value,
+                    "payload": finished.model_dump(by_alias=True),
+                },
+            )
 
     try:
         while True:
@@ -577,32 +597,15 @@ async def end_game(db: AsyncSession, room_code: str) -> None:
     session.ended_at = utcnow()
     await db.commit()
 
-    leaderboard = await game_service.get_leaderboard(db, room_code)
-
-    duration_ms = 0
-    if session.started_at and session.ended_at:
-        duration_ms = int(
-            (session.ended_at - session.started_at).total_seconds() * 1000
-        )
-    elif session.started_at:
-        duration_ms = int(
-            (
-                datetime.now(timezone.utc).replace(tzinfo=None) - session.started_at
-            ).total_seconds()
-            * 1000
-        )
-
-    question_count = len(session.quiz.questions)
+    finished = await game_service.build_game_finished(db, room_code)
+    if finished is None:
+        return
 
     await connection_manager.broadcast_to_room(
         room_code,
         {
             "type": WSMessageType.GAME_FINISHED.value,
-            "payload": WSGameFinished(
-                final_leaderboard=leaderboard,
-                total_questions=question_count,
-                duration_ms=duration_ms,
-            ).model_dump(by_alias=True),
+            "payload": finished.model_dump(by_alias=True),
         },
     )
 
@@ -611,6 +614,6 @@ async def end_game(db: AsyncSession, room_code: str) -> None:
     logger.info(
         "game_finished",
         room_code=room_code,
-        duration_ms=duration_ms,
-        player_count=len(leaderboard),
+        duration_ms=finished.duration_ms,
+        player_count=len(finished.final_leaderboard),
     )

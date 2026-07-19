@@ -99,7 +99,7 @@ class AuthValidationError(AppException):
         super().__init__(
             error_code=error_code,
             message=message,
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             details=details,
         )
 
