@@ -9,7 +9,7 @@ from starlette.types import ASGIApp
 
 from app.auth.services.jwt_service import jwt_service
 from app.auth.exceptions import TokenExpiredError, InvalidTokenError
-from app.settings import is_dev
+from app.settings import is_production
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -89,7 +89,7 @@ class AutoRefreshMiddleware(BaseHTTPMiddleware):
                 value=new_access_token,
                 httponly=True,
                 samesite="lax",
-                secure=not is_dev(),
+                secure=is_production(),
             )
 
         return response

@@ -22,7 +22,7 @@ from app.core.utils import utcnow
 from app.database import AsyncSessionLocal, get_async_db
 from app.models.game import GameSessionStatus
 from app.models.user import User
-from app.settings import ENV_SETTINGS, is_dev
+from app.settings import ENV_SETTINGS, is_production
 from app.user.services.user_service import user_service
 from app.user.types import UserId
 
@@ -107,7 +107,7 @@ async def join_room(
         value=ws_token,
         httponly=True,
         samesite="lax",
-        secure=not is_dev(),
+        secure=is_production(),
         max_age=4 * 3600,
     )
     return PlayerInfo(

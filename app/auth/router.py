@@ -22,7 +22,7 @@ from app.core.security import (
     reset_login_attempts,
 )
 from app.database import get_async_db
-from app.settings import is_dev
+from app.settings import is_production
 from app.user.schemas import UserCreate, UserLogin, UserOut
 from app.user.services.user_service import user_service
 
@@ -32,7 +32,7 @@ router = APIRouter(tags=["Auth"])
 def _set_auth_cookies(
     response: Response, access_token: str, refresh_token: str
 ) -> None:
-    secure = not is_dev()
+    secure = is_production()
     response.set_cookie(
         key="access_token",
         value=access_token,
@@ -121,7 +121,7 @@ async def refresh(
         value=access_token,
         httponly=True,
         samesite="lax",
-        secure=not is_dev(),
+        secure=is_production(),
     )
     return MessageResponse(message="OK")
 

@@ -56,3 +56,7 @@ ENV_SETTINGS = Settings()
 
 def is_dev() -> bool:
     return ENV_SETTINGS.ENVIRONMENT == "development"
+
+
+def is_production() -> bool:
+    return ENV_SETTINGS.ENVIRONMENT == "production"
