@@ -49,7 +49,7 @@ async def test_change_password_success(client: AsyncClient) -> None:
     await client.post("/api/v1/auth/register", json=USER)
     resp = await client.post(
         "/api/v1/user/password",
-        json={"currentPassword": USER["password"], "newPassword": "NewPass456!"},
+        json={"currentPassword": USER["password"], "nextPassword": "NewPass456!"},
     )
     assert resp.status_code == 200
 
@@ -73,7 +73,7 @@ async def test_change_password_wrong_current(client: AsyncClient) -> None:
     await client.post("/api/v1/auth/register", json=USER)
     resp = await client.post(
         "/api/v1/user/password",
-        json={"currentPassword": "WrongPass1!", "newPassword": "NewPass456!"},
+        json={"currentPassword": "WrongPass1!", "nextPassword": "NewPass456!"},
     )
     assert resp.status_code == 401
     assert resp.json()["errorCode"] == "INVALID_CREDENTIALS"
