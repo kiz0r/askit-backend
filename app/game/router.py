@@ -17,6 +17,7 @@ from app.auth.services.jwt_service import jwt_service
 from app.core.limiter import limiter
 from app.core.logging import get_logger
 from app.core.security import create_ws_token, verify_ws_token
+from app.core.utils import utcnow
 from app.database import get_async_db
 from app.models.game import GameSessionStatus
 from app.models.user import User
@@ -562,6 +563,7 @@ async def end_game(db: AsyncSession, room_code: str) -> None:
         return
 
     session.status = GameSessionStatus.finished
+    session.ended_at = utcnow()
     await db.commit()
 
     leaderboard = await game_service.get_leaderboard(db, room_code)
