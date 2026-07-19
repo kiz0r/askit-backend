@@ -146,7 +146,14 @@ async def websocket_player_endpoint(
     player.is_connected = True
     await db.commit()
 
-    room_state = await game_service.build_room_state(db, room_code)
+    try:
+        room_state = await game_service.build_room_state(db, room_code)
+    except Exception as e:
+        logger.error("room_state_sync_failed", error=str(e), player_id=player_id)
+        await connection_manager.disconnect(websocket, room_code, player_id)
+        await websocket.close(code=1011, reason="Failed to load room state")
+        return
+
     if room_state:
         await connection_manager.send_to_player(
             player_id,
@@ -244,7 +251,14 @@ async def websocket_host_endpoint(
 
     await connection_manager.connect_host(websocket, room_code)
 
-    room_state = await game_service.build_room_state(db, room_code)
+    try:
+        room_state = await game_service.build_room_state(db, room_code)
+    except Exception as e:
+        logger.error("room_state_sync_failed", error=str(e), room_code=room_code)
+        await connection_manager.disconnect_host(websocket, room_code)
+        await websocket.close(code=1011, reason="Failed to load room state")
+        return
+
     if room_state:
         await connection_manager.send_to_host(
             room_code,

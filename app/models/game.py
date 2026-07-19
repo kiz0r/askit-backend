@@ -4,7 +4,15 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, VARCHAR, func
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    UniqueConstraint,
+    VARCHAR,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -95,6 +103,9 @@ class GamePlayer(Base):
 
 class GamePlayerAnswer(Base):
     __tablename__ = "game_player_answers"
+    __table_args__ = (
+        UniqueConstraint("player_id", "question_id", name="uq_player_question_answer"),
+    )
 
     answer_record_id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, default=uuid.uuid4, index=True

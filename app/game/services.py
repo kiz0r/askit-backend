@@ -7,6 +7,7 @@ from uuid import UUID
 
 from attrs import frozen
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -374,16 +375,19 @@ class GameService:
         # Calculate score
         points = calculate_score(time_taken_ms, question.time_limit, is_correct)
 
-        # Update player score
+        # Update player score and record the answer atomically. The unique
+        # constraint on (player_id, question_id) is the authoritative guard
+        # against duplicate answers: the Redis SISMEMBER check above is only
+        # a fast-path optimization and can be bypassed if Redis loses its
+        # state (e.g. a restart mid-session), so both changes are committed
+        # together and a duplicate is rejected here regardless.
         player_result = await db.execute(
             select(GamePlayer).where(GamePlayer.player_id == UUID(player_id))
         )
         player = player_result.scalars().first()
         if player:
             player.score += points
-            await db.commit()
 
-        # Record answer
         answer_record = GamePlayerAnswer(
             player_id=UUID(player_id),
             question_id=UUID(question_id),
@@ -393,9 +397,14 @@ class GameService:
             points_earned=points,
         )
         db.add(answer_record)
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            raise AlreadyAnsweredError()
 
-        # Mark as answered in Redis
+        # Mark as answered in Redis so subsequent submissions can be
+        # rejected without a database round trip.
         await cast(Awaitable[int], redis_client.sadd(answered_key, player_id))
         await redis_client.expire(answered_key, 600)
 
