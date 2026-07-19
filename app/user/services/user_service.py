@@ -48,11 +48,10 @@ class UserService:
             await db.commit()
             await db.refresh(user)
             return user
-        except IntegrityError as e:
+        except IntegrityError:
+            # Do not distinguish between a taken username and a taken email:
+            # returning the same generic error prevents account enumeration.
             await db.rollback()
-            error_msg = str(e.orig).lower()
-            if "username" in error_msg:
-                raise UsernameAlreadyExistsError()
             raise RegistrationFailedError()
 
     async def get_user_by_email(self, db: AsyncSession, email: EmailStr) -> User | None:

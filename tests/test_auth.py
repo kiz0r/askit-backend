@@ -23,7 +23,7 @@ async def test_register_duplicate_email(client: AsyncClient) -> None:
         "/api/v1/auth/register", json={**USER, "username": "other"}
     )
     assert resp.status_code == 409
-    assert resp.json()["errorCode"] == "USER_ALREADY_EXISTS"
+    assert resp.json()["errorCode"] == "REGISTRATION_FAILED"
 
 
 async def test_register_duplicate_username(client: AsyncClient) -> None:
@@ -32,7 +32,7 @@ async def test_register_duplicate_username(client: AsyncClient) -> None:
         "/api/v1/auth/register", json={**USER, "email": "other@example.com"}
     )
     assert resp.status_code == 409
-    assert resp.json()["errorCode"] == "USERNAME_ALREADY_EXISTS"
+    assert resp.json()["errorCode"] == "REGISTRATION_FAILED"
 
 
 async def test_register_weak_password(client: AsyncClient) -> None:
