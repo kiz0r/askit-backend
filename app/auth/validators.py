@@ -1,13 +1,14 @@
 """Input validators for authentication data."""
 
 import re
-from app.auth.exceptions import InvalidUsernameError, InvalidPasswordError
+
+from app.auth.exceptions import InvalidPasswordError, InvalidUsernameError
 
 
 class AuthValidators:
     """Validators for authentication input data."""
 
-    USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,30}$")
+    _USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{3,30}$")
 
     @staticmethod
     def validate_username(username: str) -> str:
@@ -37,7 +38,7 @@ class AuthValidators:
         if len(username) > 30:
             raise InvalidUsernameError("Username must not exceed 30 characters")
 
-        if not AuthValidators.USERNAME_PATTERN.match(username):
+        if not AuthValidators._USERNAME_PATTERN.match(username):
             raise InvalidUsernameError(
                 "Username can only contain letters, numbers, and underscores"
             )

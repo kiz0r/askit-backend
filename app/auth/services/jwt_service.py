@@ -1,19 +1,24 @@
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any, cast
+from typing import TypedDict
+
 from jwt import ExpiredSignatureError, InvalidTokenError as JWTInvalidTokenError
 from attrs import frozen
+
+import jwt
+
 from app.settings import ENV_SETTINGS
 from app.auth.exceptions import TokenExpiredError, InvalidTokenError
-import jwt
+
+
+class JWTPayload(TypedDict):
+    sub: str
+    type: str
+    iat: int
+    exp: int
 
 
 @frozen
 class JWTService:
-    """
-    Immutable service for JWT token operations.
-    Configuration is loaded from environment settings.
-    """
-
     access_token_lifetime: int = 3600
     refresh_token_lifetime: int = 60 * 60 * 24 * 7
     _access_secret: str = ENV_SETTINGS.JWT_ACCESS_SECRET
@@ -21,22 +26,16 @@ class JWTService:
     _algorithm: str = "HS256"
 
     def _create_token(
-        self,
-        subject: str,
-        token_type: str,
-        key: str,
-        expires_in: int,
+        self, subject: str, token_type: str, key: str, expires_in: int
     ) -> str:
         now = datetime.now(timezone.utc)
-
         payload = {
             "sub": subject,
             "type": token_type,
             "iat": now,
             "exp": now + timedelta(seconds=expires_in),
         }
-
-        return cast(str, jwt.encode(payload, key, algorithm=self._algorithm))
+        return str(jwt.encode(payload, key, algorithm=self._algorithm))
 
     def create_access_token(self, user_id: str) -> str:
         return self._create_token(
@@ -54,26 +53,24 @@ class JWTService:
             expires_in=self.refresh_token_lifetime,
         )
 
-    def verify_access_token(self, token: str) -> Dict[str, Any]:
+    def verify_access_token(self, token: str) -> JWTPayload:
         return self._decode(token, self._access_secret, "access")
 
-    def verify_refresh_token(self, token: str) -> Dict[str, Any]:
+    def verify_refresh_token(self, token: str) -> JWTPayload:
         return self._decode(token, self._refresh_secret, "refresh")
 
-    def _decode(self, token: str, key: str, expected_type: str) -> Dict[str, Any]:
+    def _decode(self, token: str, key: str, expected_type: str) -> JWTPayload:
         try:
-            payload = jwt.decode(token, key, algorithms=[self._algorithm])
-
-            if payload.get("type") != expected_type:
+            raw = jwt.decode(token, key, algorithms=[self._algorithm])
+            if raw.get("type") != expected_type:
                 raise InvalidTokenError()
-
-            return payload
-
+            return JWTPayload(
+                sub=raw["sub"], type=raw["type"], iat=raw["iat"], exp=raw["exp"]
+            )
         except ExpiredSignatureError:
             raise TokenExpiredError()
         except JWTInvalidTokenError:
             raise InvalidTokenError()
 
 
-# Singleton instance with default configuration
 jwt_service = JWTService()

@@ -1,120 +1,128 @@
-import enum
 import uuid
-from app.quiz.schemas import QuizVisibility
+from datetime import datetime
+from typing import TYPE_CHECKING
+
 from sqlalchemy import (
     UUID,
-    Column,
-    Integer,
-    Boolean,
-    ForeignKey,
-    Enum,
     DateTime,
-    VARCHAR,
+    Enum,
+    ForeignKey,
+    Integer,
     Table,
+    VARCHAR,
+    Column,
+    func,
 )
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
-from pydantic import BaseModel
-from typing import Optional, Literal
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from app.database import Base
+from app.quiz.schemas import QuizStatus, QuizVisibility
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
-class QuizSettingsSchema(BaseModel):
-    randomize_answers: bool = False
-    default_time_per_question: int = 30_000
-    visibility: Literal["public", "private"]
-    max_participants: Optional[int] = None
-
-
-# Many-to-many association table for Quiz <-> Tag
 quiz_tags = Table(
     "quiz_tags",
     Base.metadata,
-    Column("quiz_id", UUID, ForeignKey("quizzes.quiz_id"), primary_key=True),
-    Column("tag_id", UUID, ForeignKey("tags.tag_id"), primary_key=True),
+    Column(
+        "quiz_id",
+        UUID,
+        ForeignKey("quizzes.quiz_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "tag_id", UUID, ForeignKey("tags.tag_id", ondelete="CASCADE"), primary_key=True
+    ),
+)
+
+quiz_favorites = Table(
+    "quiz_favorites",
+    Base.metadata,
+    Column(
+        "user_id", UUID, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    ),
+    Column(
+        "quiz_id",
+        UUID,
+        ForeignKey("quizzes.quiz_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("created_at", DateTime, default=func.now()),
 )
 
 
 class Tag(Base):
-    """Tags for categorizing quizzes."""
-
     __tablename__ = "tags"
 
-    tag_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
+    tag_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
     )
-    name = Column(VARCHAR(30), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(VARCHAR(30), unique=True, index=True)
 
-    quizzes = relationship("Quiz", secondary=quiz_tags, back_populates="tags")
+    quizzes: Mapped[list["Quiz"]] = relationship(
+        "Quiz", secondary=quiz_tags, back_populates="tags"
+    )
 
 
 class Quiz(Base):
     __tablename__ = "quizzes"
 
-    quiz_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
+    quiz_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
     )
-    creator_id = Column(UUID, ForeignKey("users.id"), nullable=False)
-    creator = relationship("User", back_populates="quizzes")
+    creator_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
 
-    title = Column(VARCHAR(50), nullable=False)
-    description = Column(VARCHAR(300), nullable=True)
+    title: Mapped[str] = mapped_column(VARCHAR(50))
+    description: Mapped[str | None] = mapped_column(VARCHAR(300))
 
-    # Settings (randomize_questions, show_immediate_feedback moved to room/session level)
-    randomize_answers = Column(Boolean, default=False)
-    default_time_per_question = Column(
-        Integer, default=30_000
-    )  # UI preset, milliseconds
-    visibility = Column(
-        Enum(QuizVisibility, name="quiz_visibility"),
-        nullable=False,
+    default_time_per_question: Mapped[int] = mapped_column(Integer, default=30_000)
+    visibility: Mapped[QuizVisibility] = mapped_column(
+        Enum(QuizVisibility, native_enum=False),
         default=QuizVisibility.public,
     )
-    max_participants = Column(Integer, nullable=True)
+    status: Mapped[QuizStatus] = mapped_column(
+        Enum(QuizStatus, native_enum=False),
+        default=QuizStatus.draft,
+    )
+    max_participants: Mapped[int | None] = mapped_column(Integer)
 
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=func.now(), onupdate=func.now()
+    )
 
-    questions = relationship(
+    creator: Mapped["User"] = relationship("User", back_populates="quizzes")
+    questions: Mapped[list["QuizQuestion"]] = relationship(
         "QuizQuestion",
         back_populates="quiz",
         cascade="all, delete-orphan",
         order_by="QuizQuestion.position",
     )
-    sessions = relationship("QuizSession", back_populates="quiz")
-    tags = relationship("Tag", secondary=quiz_tags, back_populates="quizzes")
+    tags: Mapped[list["Tag"]] = relationship(
+        "Tag", secondary=quiz_tags, back_populates="quizzes"
+    )
+    favorited_by: Mapped[list["User"]] = relationship(
+        "User", secondary="quiz_favorites", back_populates="favorite_quizzes"
+    )
 
 
 class QuizQuestion(Base):
     __tablename__ = "quiz_questions"
 
-    question_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
+    question_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
     )
-    quiz_id = Column(UUID, ForeignKey("quizzes.quiz_id"), nullable=False, index=True)
-    text = Column(VARCHAR(255), nullable=False)
-    position = Column(
-        Integer, nullable=False, default=1
-    )  # For drag & drop ordering (1-indexed)
-    time_limit = Column(
-        Integer, nullable=False, default=30_000
-    )  # Per-question time in ms
-    is_hidden = Column(Boolean, nullable=False, default=False)  # Hide from game
+    quiz_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("quizzes.quiz_id"), index=True
+    )
+    text: Mapped[str] = mapped_column(VARCHAR(255))
+    position: Mapped[int] = mapped_column(Integer, default=1)
+    time_limit: Mapped[int] = mapped_column(Integer, default=30_000)
+    allow_multiple_answers: Mapped[bool] = mapped_column(default=False)
 
-    quiz = relationship("Quiz", back_populates="questions")
-    answers = relationship(
+    quiz: Mapped["Quiz"] = relationship("Quiz", back_populates="questions")
+    answers: Mapped[list["QuizAnswer"]] = relationship(
         "QuizAnswer",
         back_populates="question",
         cascade="all, delete-orphan",
@@ -125,68 +133,15 @@ class QuizQuestion(Base):
 class QuizAnswer(Base):
     __tablename__ = "quiz_answers"
 
-    answer_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
+    answer_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4, index=True
     )
-    question_id = Column(
-        UUID,
-        ForeignKey("quiz_questions.question_id", name="fk_answer_question"),
-        nullable=False,
+    question_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("quiz_questions.question_id", name="fk_answer_question")
     )
-    text = Column(VARCHAR(255), nullable=False)
-    is_correct = Column(Boolean, default=False, nullable=False)
+    text: Mapped[str] = mapped_column(VARCHAR(255))
+    is_correct: Mapped[bool] = mapped_column(default=False)
 
-    question = relationship(
+    question: Mapped["QuizQuestion"] = relationship(
         "QuizQuestion", back_populates="answers", foreign_keys=[question_id]
     )
-
-
-class QuizSessionStatus(enum.Enum):
-    waiting = "waiting"
-    in_progress = "in_progress"
-    finished = "finished"
-
-
-class QuizSession(Base):
-    __tablename__ = "quiz_sessions"
-
-    session_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
-    )
-    quiz_id = Column(UUID, ForeignKey("quizzes.quiz_id"), nullable=False)
-    created_at = Column(DateTime, default=func.now())
-    status = Column(
-        Enum(QuizSessionStatus, name="quiz_session_status"),
-        nullable=False,
-        default=QuizSessionStatus.waiting,
-    )
-    quiz = relationship("Quiz", back_populates="sessions")
-    participants = relationship("QuizParticipant", back_populates="session")
-
-
-class QuizParticipant(Base):
-    __tablename__ = "quiz_participants"
-
-    participant_id = Column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
-        unique=True,
-        index=True,
-    )
-    session_id = Column(UUID, ForeignKey("quiz_sessions.session_id"), nullable=False)
-    anonymous_user_id = Column(UUID, ForeignKey("anonymous_users.id"), nullable=False)
-
-    nickname = Column(VARCHAR(50), nullable=False)
-    score = Column(Integer, default=0)
-    is_connected = Column(Boolean, default=True)
-
-    session = relationship("QuizSession", back_populates="participants")

@@ -3,10 +3,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import get_current_user
 from app.database import get_async_db
 from app.models.user import User
-from app.quiz.schemas import QuizCreate, QuizOut, QuizUpdate, QuizListOut
-from app.quiz.services import quiz_service
-from app.quiz.exceptions import QuizNotFoundError, QuizAccessDeniedError
-from app.quiz.types import QuizId
+from .exceptions import QuizNotFoundError
+from .schemas import (
+    BulkStatsRequest,
+    BulkStatsOut,
+    FavoriteActionResponse,
+    QuizCreate,
+    QuizExportOut,
+    QuizListOut,
+    QuizOut,
+    QuizStatsOut,
+    QuizUpdate,
+    SetQuizStatusInput,
+)
+from .services import quiz_service
+from .types import QuizId
 
 router = APIRouter(tags=["Quiz"])
 
@@ -27,14 +38,16 @@ async def list_quizzes(
     db: AsyncSession = Depends(get_async_db),
 ) -> QuizListOut:
     quizzes = await quiz_service.list_quizzes(db, current_user)
-    return QuizListOut(items=quizzes)
+    return QuizListOut(items=quizzes, total=len(quizzes))
 
 
 @router.get("/{quiz_id}", response_model=QuizOut, response_model_by_alias=True)
 async def get_quiz(
-    quiz_id: QuizId, db: AsyncSession = Depends(get_async_db)
+    quiz_id: QuizId,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
 ) -> QuizOut:
-    quiz = await quiz_service.get_quiz(db, quiz_id)
+    quiz = await quiz_service.get_quiz(db, quiz_id, owner=current_user)
     if quiz is None:
         raise QuizNotFoundError()
 
@@ -48,14 +61,7 @@ async def update_quiz(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ) -> QuizOut:
-    quiz = await quiz_service.update_quiz(db, quiz_id, current_user, body)
-    if quiz is None:
-        # Distinguish between not found and access denied
-        existing_quiz = await quiz_service.get_quiz(db, quiz_id)
-        if existing_quiz is None:
-            raise QuizNotFoundError()
-        raise QuizAccessDeniedError()
-    return quiz
+    return await quiz_service.update_quiz(db, quiz_id, current_user, body)
 
 
 @router.delete("/{quiz_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -64,11 +70,86 @@ async def delete_quiz(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
 ) -> Response:
-    delete_result = await quiz_service.delete_quiz(db, quiz_id, current_user)
-    if not delete_result:
-        quiz = await quiz_service.get_quiz(db, quiz_id)
-        if quiz is None:
-            raise QuizNotFoundError()
-
-        raise QuizAccessDeniedError()
+    await quiz_service.delete_quiz(db, quiz_id, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch(
+    "/{quiz_id}/status",
+    response_model=QuizOut,
+    response_model_by_alias=True,
+)
+async def set_quiz_status(
+    quiz_id: QuizId,
+    body: SetQuizStatusInput,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> QuizOut:
+    return await quiz_service.set_quiz_status(db, quiz_id, body.status, current_user)
+
+
+@router.get("/favorites/list", response_model=QuizListOut, response_model_by_alias=True)
+async def list_favorites(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> QuizListOut:
+    quizzes = await quiz_service.list_favorites(db, current_user)
+    return QuizListOut(items=quizzes, total=len(quizzes))
+
+
+@router.post(
+    "/{quiz_id}/favorite/toggle",
+    response_model=FavoriteActionResponse,
+    response_model_by_alias=True,
+)
+async def toggle_favorite(
+    quiz_id: QuizId,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> FavoriteActionResponse:
+    result = await quiz_service.toggle_favorite(db, quiz_id, current_user)
+    if result is None:
+        raise QuizNotFoundError()
+    return result
+
+
+@router.get(
+    "/{quiz_id}/stats", response_model=QuizStatsOut, response_model_by_alias=True
+)
+async def get_quiz_stats(
+    quiz_id: QuizId,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> QuizStatsOut:
+    return await quiz_service.get_quiz_stats(db, quiz_id, current_user)
+
+
+@router.get(
+    "/{quiz_id}/export", response_model=QuizExportOut, response_model_by_alias=True
+)
+async def export_quiz(
+    quiz_id: QuizId,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> QuizExportOut:
+    return await quiz_service.export_quiz(db, quiz_id, current_user)
+
+
+@router.post("/import", response_model=QuizOut, response_model_by_alias=True)
+async def import_quiz(
+    body: QuizCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> QuizOut:
+    quiz = await quiz_service.create_quiz(db, current_user, body)
+    return quiz
+
+
+@router.post("/stats", response_model=BulkStatsOut, response_model_by_alias=True)
+async def get_bulk_quiz_stats(
+    body: BulkStatsRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> BulkStatsOut:
+    items = await quiz_service.get_bulk_quiz_stats(db, body.quiz_ids, current_user)
+    return BulkStatsOut(items=items)

@@ -1,43 +1,50 @@
+from typing import cast
+
 import structlog
 from fastapi import Request, status
-from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+
 from app.core.exceptions import AppException
 
 logger = structlog.get_logger(__name__)
 
 
-async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
-    """Handle custom application exceptions and return flat structured response."""
+async def app_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    app_exc = cast(AppException, exc)
     logger.warning(
         "application_exception",
-        error_code=exc.error_code,
-        message=exc.message,
-        status_code=exc.status_code,
-        details=exc.details,
+        error_code=app_exc.error_code,
+        message=app_exc.message,
+        status_code=app_exc.status_code,
+        details=app_exc.details,
         path=request.url.path,
     )
-    return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+    return JSONResponse(status_code=app_exc.status_code, content=app_exc.to_dict())
 
 
 async def validation_exception_handler(
-    request: Request, exc: RequestValidationError
+    request: Request, exc: Exception
 ) -> JSONResponse:
-    """
-    Handle Pydantic validation errors and return structured response.
+    validation_exc = cast(RequestValidationError, exc)
+    errors = validation_exc.errors()
 
-    Converts Pydantic validation errors into our standard error format.
-    """
-    errors = []
-    for error in exc.errors():
+    if len(errors) == 1:
+        error = errors[0]
         field = ".".join(str(loc) for loc in error["loc"] if loc != "body")
-        errors.append({"field": field, "message": error["msg"], "type": error["type"]})
+        message = f"{field}: {error['msg']}" if field else error["msg"]
+    else:
+        field_msgs = []
+        for error in errors:
+            field = ".".join(str(loc) for loc in error["loc"] if loc != "body")
+            field_msgs.append(field if field else error["msg"])
+        message = f"Invalid fields: {', '.join(field_msgs)}"
 
     logger.warning(
         "validation_error",
         error_count=len(errors),
-        errors=errors,
+        message=message,
         path=request.url.path,
     )
 
@@ -45,25 +52,32 @@ async def validation_exception_handler(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "errorCode": "VALIDATION_ERROR",
-            "message": "Input validation failed",
-            "details": {"errors": errors},
+            "message": message,
         },
     )
 
 
 async def pydantic_validation_exception_handler(
-    request: Request, exc: ValidationError
+    request: Request, exc: Exception
 ) -> JSONResponse:
-    """Handle Pydantic ValidationError from custom validators."""
-    errors = []
-    for error in exc.errors():
+    validation_exc = cast(ValidationError, exc)
+    errors = validation_exc.errors()
+
+    if len(errors) == 1:
+        error = errors[0]
         field = ".".join(str(loc) for loc in error["loc"])
-        errors.append({"field": field, "message": error["msg"], "type": error["type"]})
+        message = f"{field}: {error['msg']}" if field else error["msg"]
+    else:
+        field_msgs = []
+        for error in errors:
+            field = ".".join(str(loc) for loc in error["loc"])
+            field_msgs.append(field if field else error["msg"])
+        message = f"Invalid fields: {', '.join(field_msgs)}"
 
     logger.warning(
         "pydantic_validation_error",
         error_count=len(errors),
-        errors=errors,
+        message=message,
         path=request.url.path,
     )
 
@@ -71,18 +85,22 @@ async def pydantic_validation_exception_handler(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
             "errorCode": "VALIDATION_ERROR",
-            "message": "Input validation failed",
-            "details": {"errors": errors},
+            "message": message,
+        },
+    )
+
+
+async def rate_limit_exceeded_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={
+            "errorCode": "RATE_LIMITED",
+            "message": "Too many requests. Please try again later.",
         },
     )
 
 
 async def generic_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """
-    Catch-all handler for unexpected exceptions.
-
-    In production, this prevents exposing internal error details.
-    """
     logger.error(
         "unhandled_exception",
         exc_info=exc,

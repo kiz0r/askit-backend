@@ -1,23 +1,28 @@
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession, create_async_engine
-from sqlalchemy.orm import declarative_base
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
+
 from app.settings import ENV_SETTINGS
 
-DATABASE_URL = f"postgresql+asyncpg://{ENV_SETTINGS.POSTGRES_USER}:{ENV_SETTINGS.POSTGRES_PASSWORD}@{ENV_SETTINGS.POSTGRES_HOST}:{ENV_SETTINGS.POSTGRES_PORT}/{ENV_SETTINGS.POSTGRES_DB}"
 
-engine = create_async_engine(DATABASE_URL, echo=True, future=True)
+class Base(DeclarativeBase):
+    pass
+
+
+engine = create_async_engine(
+    ENV_SETTINGS.database_url,
+    echo=ENV_SETTINGS.LOG_LEVEL == "DEBUG",
+    future=True,
+)
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
     expire_on_commit=False,
 )
 
-Base = declarative_base()
-
 
 async def init_db() -> None:
-    """Async tables creation"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
