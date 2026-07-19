@@ -80,6 +80,8 @@ async def test_get_room_not_found(client: AsyncClient) -> None:
 
 async def test_join_room(client: AsyncClient) -> None:
     _, room_code = await _published_quiz_and_room(client)
+    # Join as an anonymous guest, not as the host who created the room.
+    client.cookies.clear()
     resp = await client.post(
         f"/api/v1/game/room/{room_code}/join", json={"nickname": "Alice"}
     )
@@ -90,6 +92,8 @@ async def test_join_room(client: AsyncClient) -> None:
 
 async def test_join_room_nickname_taken(client: AsyncClient) -> None:
     _, room_code = await _published_quiz_and_room(client)
+    # Join as an anonymous guest, not as the host who created the room.
+    client.cookies.clear()
     await client.post(f"/api/v1/game/room/{room_code}/join", json={"nickname": "Alice"})
     resp = await client.post(
         f"/api/v1/game/room/{room_code}/join", json={"nickname": "Alice"}
