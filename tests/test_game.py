@@ -36,7 +36,10 @@ async def _published_quiz_and_room(client: AsyncClient) -> tuple[str, str]:
     await client.post("/api/v1/auth/register", json=USER)
     create = await client.post("/api/v1/quiz", json=_QUIZ)
     quiz_id = create.json()["quizId"]
-    await client.patch(f"/api/v1/quiz/{quiz_id}/status", json={"status": "published"})
+    pub = await client.patch(
+        f"/api/v1/quiz/{quiz_id}/status", json={"status": "published"}
+    )
+    assert pub.status_code == 200
     room = await client.post("/api/v1/game/room", json={"quizId": quiz_id})
     return quiz_id, room.json()["roomCode"]
 
