@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from uuid import UUID
 
 from attrs import frozen
 from pydantic import EmailStr
@@ -20,17 +19,9 @@ from app.user.types import UserId
 
 @frozen
 class UserService:
-    def _to_user_id(self, value: str | UUID) -> UserId:
-        if isinstance(value, UUID):
-            return UserId(str(value))
-        return UserId(value)
-
-    def _from_user_id(self, user_id: UserId) -> UUID:
-        return UUID(user_id)
-
     def user_to_response(self, user: User) -> UserOut:
         return UserOut(
-            userId=self._to_user_id(user.id),
+            userId=UserId(user.id),
             username=user.username,
             email=user.email,
         )
@@ -59,7 +50,7 @@ class UserService:
         return result
 
     async def get_user_by_id(self, db: AsyncSession, user_id: UserId) -> User | None:
-        return await db.get(User, self._from_user_id(user_id))
+        return await db.get(User, user_id)
 
     async def update_last_login(self, db: AsyncSession, user: User) -> None:
         user.last_login = datetime.now(timezone.utc)

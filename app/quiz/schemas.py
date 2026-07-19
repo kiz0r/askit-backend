@@ -212,7 +212,7 @@ class SetQuizStatusInput(BaseModel):
 
 
 class BulkStatsRequest(BaseModel):
-    quiz_ids: list[str] = Field(alias="quizIds")
+    quiz_ids: list[QuizId] = Field(alias="quizIds")
 
     model_config = ConfigDict(populate_by_name=True)
 

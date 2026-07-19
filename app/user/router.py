@@ -19,7 +19,7 @@ router = APIRouter(tags=["User"])
 @router.get("/profile", response_model=UserOut)
 async def get_user_profile(current_user: User = Depends(get_current_user)) -> UserOut:
     return UserOut(
-        userId=UserId(str(current_user.id)),
+        userId=UserId(current_user.id),
         username=str(current_user.username),
         email=str(current_user.email),
     )

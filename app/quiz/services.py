@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Callable, TypeVar
 from uuid import UUID
 from attrs import frozen
 from sqlalchemy import delete, insert, select
@@ -33,18 +32,9 @@ from .schemas import (
 from app.core.utils import utcnow
 from .types import AnswerId, QuestionId, QuizId
 
-_IdT = TypeVar("_IdT", bound=str)
-
-
-def _to_id(id_type: Callable[[str], _IdT], value: str | UUID) -> _IdT:
-    return id_type(str(value) if isinstance(value, UUID) else value)
-
 
 @frozen
 class QuizService:
-    def _from_quiz_id(self, quiz_id: QuizId) -> UUID:
-        return UUID(quiz_id)
-
     async def _fetch_quiz(self, db: AsyncSession, uuid_val: UUID) -> Quiz | None:
         result: Quiz | None = await db.scalar(
             select(Quiz)
@@ -61,13 +51,13 @@ class QuizService:
         for question in quiz.questions:
             questions_out.append(
                 QuizQuestionOut(
-                    question_id=_to_id(QuestionId, question.question_id),
+                    question_id=QuestionId(question.question_id),
                     text=question.text,
                     position=question.position,
                     time_limit=question.time_limit,
                     answers=[
                         QuizAnswerOut(
-                            answer_id=_to_id(AnswerId, answer.answer_id),
+                            answer_id=AnswerId(answer.answer_id),
                             text=answer.text,
                             is_correct=answer.is_correct,
                         )
@@ -80,7 +70,7 @@ class QuizService:
         tags = [tag.name for tag in quiz.tags] if quiz.tags else []
 
         return QuizOut(
-            quiz_id=_to_id(QuizId, quiz.quiz_id),
+            quiz_id=QuizId(quiz.quiz_id),
             creator_id=str(quiz.creator_id),
             title=quiz.title,
             description=quiz.description,
@@ -168,7 +158,7 @@ class QuizService:
         self, db: AsyncSession, quiz_id: QuizId, owner: User | None = None
     ) -> QuizOut | None:
         try:
-            uuid_val = self._from_quiz_id(quiz_id)
+            uuid_val = quiz_id
             result = await db.execute(
                 select(Quiz)
                 .where(Quiz.quiz_id == uuid_val)
@@ -200,7 +190,7 @@ class QuizService:
     async def update_quiz(
         self, db: AsyncSession, quiz_id: QuizId, user: User, data: QuizUpdate
     ) -> QuizOut:
-        uuid_val = self._from_quiz_id(quiz_id)
+        uuid_val = quiz_id
         quiz = await self._fetch_quiz(db, uuid_val)
 
         if quiz is None:
@@ -276,7 +266,7 @@ class QuizService:
         new_status: QuizStatus,
         user: User,
     ) -> QuizOut:
-        uuid_val = self._from_quiz_id(quiz_id)
+        uuid_val = quiz_id
         quiz = await self._fetch_quiz(db, uuid_val)
 
         if quiz is None:
@@ -297,7 +287,7 @@ class QuizService:
         return self.quiz_to_response(refreshed)
 
     async def delete_quiz(self, db: AsyncSession, quiz_id: QuizId, user: User) -> None:
-        uuid_val = self._from_quiz_id(quiz_id)
+        uuid_val = quiz_id
         result = await db.execute(
             select(Quiz)
             .where(Quiz.quiz_id == uuid_val)
@@ -340,7 +330,7 @@ class QuizService:
         self, db: AsyncSession, quiz_id: QuizId, user: User
     ) -> FavoriteActionResponse | None:
         """Toggle favorite state for a quiz. Returns None if quiz not found."""
-        uuid_val = self._from_quiz_id(quiz_id)
+        uuid_val = quiz_id
 
         result = await db.execute(select(Quiz).where(Quiz.quiz_id == uuid_val))
         if result.scalars().first() is None:
@@ -390,7 +380,7 @@ class QuizService:
         quiz_id: QuizId,
         user: User,
     ) -> QuizStatsOut:
-        uuid_val = self._from_quiz_id(quiz_id)
+        uuid_val = quiz_id
         quiz = await self._fetch_quiz(db, uuid_val)
         if quiz is None:
             raise QuizNotFoundError()
@@ -401,7 +391,7 @@ class QuizService:
             select(GameSession)
             .options(selectinload(GameSession.players))
             .where(
-                GameSession.quiz_id == UUID(quiz_id),
+                GameSession.quiz_id == quiz_id,
                 GameSession.status == GameSessionStatus.finished,
             )
         )
@@ -499,7 +489,7 @@ class QuizService:
     async def export_quiz(
         self, db: AsyncSession, quiz_id: QuizId, user: User
     ) -> QuizExportOut:
-        uuid_val = self._from_quiz_id(quiz_id)
+        uuid_val = quiz_id
         quiz = await self._fetch_quiz(db, uuid_val)
         if quiz is None:
             raise QuizNotFoundError()
@@ -533,17 +523,15 @@ class QuizService:
     async def get_bulk_quiz_stats(
         self,
         db: AsyncSession,
-        quiz_ids: list[str],
+        quiz_ids: list[QuizId],
         user: User,
     ) -> list[QuizStatsOut]:
         if not quiz_ids:
             return []
 
-        uuid_vals = [UUID(qid) for qid in quiz_ids]
-
         quizzes_result = await db.execute(
             select(Quiz).where(
-                Quiz.quiz_id.in_(uuid_vals),
+                Quiz.quiz_id.in_(quiz_ids),
                 Quiz.creator_id == user.id,
             )
         )
@@ -553,22 +541,24 @@ class QuizService:
             select(GameSession)
             .options(selectinload(GameSession.players))
             .where(
-                GameSession.quiz_id.in_(uuid_vals),
+                GameSession.quiz_id.in_(quiz_ids),
                 GameSession.status == GameSessionStatus.finished,
             )
         )
         all_sessions = sessions_result.scalars().all()
 
-        sessions_by_quiz: dict[str, list[GameSession]] = {qid: [] for qid in quiz_ids}
+        sessions_by_quiz: dict[str, list[GameSession]] = {
+            str(qid): [] for qid in quiz_ids
+        }
         for session in all_sessions:
             key = str(session.quiz_id)
             if key in sessions_by_quiz:
                 sessions_by_quiz[key].append(session)
 
         return [
-            self._compute_quiz_stats(qid, sessions_by_quiz[qid])
+            self._compute_quiz_stats(str(qid), sessions_by_quiz[str(qid)])
             for qid in quiz_ids
-            if qid in found_quizzes
+            if str(qid) in found_quizzes
         ]
 
 

@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
+from uuid import UUID
 
 from fastapi import (
     APIRouter,
@@ -232,7 +233,7 @@ async def websocket_host_endpoint(
         if not sub:
             await websocket.close(code=4001, reason="Invalid token")
             return
-        host_user = await user_service.get_user_by_id(db, UserId(sub))
+        host_user = await user_service.get_user_by_id(db, UserId(UUID(sub)))
     except Exception:
         await websocket.close(code=4001, reason="Invalid token")
         return

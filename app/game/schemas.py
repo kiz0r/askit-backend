@@ -5,10 +5,11 @@ from typing import Annotated, Literal, Union
 from pydantic import BaseModel, Field
 
 from app.models.game import GameSessionStatus
+from app.quiz.types import QuizId
 
 
 class CreateRoomRequest(BaseModel):
-    quiz_id: str = Field(serialization_alias="quizId", validation_alias="quizId")
+    quiz_id: QuizId = Field(serialization_alias="quizId", validation_alias="quizId")
     randomize_questions: bool = Field(
         default=False,
         serialization_alias="randomizeQuestions",

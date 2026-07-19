@@ -77,7 +77,7 @@ class GameService:
         # Verify quiz exists and user owns it
         result = await db.execute(
             select(Quiz)
-            .where(Quiz.quiz_id == UUID(data.quiz_id))
+            .where(Quiz.quiz_id == data.quiz_id)
             .options(selectinload(Quiz.questions))
         )
         quiz = result.scalars().first()

@@ -1,4 +1,5 @@
 from typing import Optional
+from uuid import UUID
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_async_db
@@ -27,7 +28,10 @@ async def get_current_user(
     if not sub:
         raise NotAuthenticatedError()
 
-    user_id = UserId(sub)
+    try:
+        user_id = UserId(UUID(sub))
+    except ValueError:
+        raise NotAuthenticatedError()
     user = await user_service.get_user_by_id(db, user_id)
 
     if not user:
@@ -58,12 +62,12 @@ async def get_optional_current_user(
         if not sub:
             return None
 
-        user_id = UserId(sub)
+        user_id = UserId(UUID(sub))
         user = await user_service.get_user_by_id(db, user_id)
 
         if not user or not user.is_active:
             return None
 
         return user
-    except (TokenExpiredError, InvalidTokenError):
+    except (TokenExpiredError, InvalidTokenError, ValueError):
         return None
