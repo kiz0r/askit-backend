@@ -672,7 +672,7 @@ class GameService:
             ],
             time_limit_ms=question.time_limit,
             started_at=started_at,
-            allow_multiple_answers=sum(1 for a in answers if a.is_correct) > 1,
+            allow_multiple_answers=question.allow_multiple_answers,
         )
 
 

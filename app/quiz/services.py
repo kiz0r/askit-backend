@@ -55,6 +55,7 @@ class QuizService:
                     text=question.text,
                     position=question.position,
                     time_limit=question.time_limit,
+                    allow_multiple_answers=question.allow_multiple_answers,
                     answers=[
                         QuizAnswerOut(
                             answer_id=AnswerId(answer.answer_id),
@@ -125,6 +126,7 @@ class QuizService:
                 text=question_data.text,
                 position=position,
                 time_limit=question_data.time_limit,
+                allow_multiple_answers=question_data.allow_multiple_answers,
             )
             answers_objs: list[QuizAnswer] = []
             correct_answers = []
@@ -228,6 +230,7 @@ class QuizService:
                     text=question_data.text,
                     position=position,
                     time_limit=question_data.time_limit,
+                    allow_multiple_answers=question_data.allow_multiple_answers,
                 )
                 answers_objs: list[QuizAnswer] = []
                 correct_answers = []
@@ -500,6 +503,7 @@ class QuizService:
             QuizQuestionExport(
                 text=q.text,
                 time_limit=q.time_limit,
+                allow_multiple_answers=q.allow_multiple_answers,
                 answers=[
                     QuizAnswerExport(text=a.text, is_correct=a.is_correct)
                     for a in q.answers

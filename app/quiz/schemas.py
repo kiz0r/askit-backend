@@ -80,6 +80,11 @@ class QuizQuestionCreate(BaseModel):
         serialization_alias="timeLimit",
         validation_alias="timeLimit",
     )
+    allow_multiple_answers: bool = Field(
+        default=False,
+        serialization_alias="allowMultipleAnswers",
+        validation_alias="allowMultipleAnswers",
+    )
     answers: list[QuizAnswerCreate]
 
     model_config = ConfigDict(populate_by_name=True)
@@ -165,6 +170,7 @@ class QuizQuestionOut(BaseModel):
     text: str
     position: int
     time_limit: int = Field(serialization_alias="timeLimit")
+    allow_multiple_answers: bool = Field(serialization_alias="allowMultipleAnswers")
     answers: list[QuizAnswerOut]
 
     model_config = ConfigDict(populate_by_name=True, from_attributes=True)
@@ -252,6 +258,7 @@ class QuizAnswerExport(BaseModel):
 class QuizQuestionExport(BaseModel):
     text: str
     time_limit: int = Field(serialization_alias="timeLimit")
+    allow_multiple_answers: bool = Field(serialization_alias="allowMultipleAnswers")
     answers: list[QuizAnswerExport]
 
     model_config = ConfigDict(populate_by_name=True)
