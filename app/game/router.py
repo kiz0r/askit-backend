@@ -19,7 +19,7 @@ from app.core.limiter import limiter
 from app.core.logging import get_logger
 from app.core.security import create_ws_token, verify_ws_token
 from app.core.utils import utcnow
-from app.database import get_async_db
+from app.database import AsyncSessionLocal, get_async_db
 from app.models.game import GameSessionStatus
 from app.models.user import User
 from app.settings import ENV_SETTINGS, is_dev
@@ -54,6 +54,10 @@ client_message_adapter: TypeAdapter[ClientMessage] = TypeAdapter(ClientMessage)
 
 router = APIRouter(tags=["Game"])
 ws_router = APIRouter(tags=["WebSocket"])
+
+# Keep strong references to fire-and-forget question-timeout tasks so the event
+# loop does not garbage-collect them mid-flight.
+_question_timeout_tasks: set[asyncio.Task[None]] = set()
 
 
 @router.post("/room", response_model=RoomResponse)
@@ -513,49 +517,55 @@ async def send_question(
         },
     )
 
-    asyncio.create_task(
-        question_timeout(db, room_code, question_index, question.time_limit)
+    task = asyncio.create_task(
+        question_timeout(room_code, question_index, question.time_limit)
     )
+    _question_timeout_tasks.add(task)
+    task.add_done_callback(_question_timeout_tasks.discard)
 
 
 async def question_timeout(
-    db: AsyncSession,
     room_code: str,
     question_index: int,
     time_limit_ms: int,
 ) -> None:
     await asyncio.sleep(time_limit_ms / 1000)
 
-    session = await game_service.get_room(db, room_code)
-    if session is None or session.current_question_index != question_index:
-        return
+    # Use a dedicated session: this runs as a detached background task, so it
+    # must not share the WebSocket handler's request-scoped AsyncSession
+    # (concurrent use of one session across tasks is unsafe, and the request
+    # session may already be closed by the time this fires).
+    async with AsyncSessionLocal() as db:
+        session = await game_service.get_room(db, room_code)
+        if session is None or session.current_question_index != question_index:
+            return
 
-    if session.status != GameSessionStatus.question:
-        return
+        if session.status != GameSessionStatus.question:
+            return
 
-    session.status = GameSessionStatus.revealing
-    await db.commit()
+        session.status = GameSessionStatus.revealing
+        await db.commit()
 
-    question = await game_service.get_current_question(db, room_code)
-    if question:
-        correct_ids = [str(a.answer_id) for a in question.answers if a.is_correct]
-        distribution = await game_service.compute_answer_distribution(
-            db, session.session_id, question
-        )
+        question = await game_service.get_current_question(db, room_code)
+        if question:
+            correct_ids = [str(a.answer_id) for a in question.answers if a.is_correct]
+            distribution = await game_service.compute_answer_distribution(
+                db, session.session_id, question
+            )
 
-        leaderboard = await game_service.get_leaderboard(db, room_code)
-        await connection_manager.broadcast_to_room(
-            room_code,
-            {
-                "type": WSMessageType.QUESTION_ENDED.value,
-                "payload": WSQuestionEnded(
-                    question_id=str(question.question_id),
-                    correct_answer_ids=correct_ids,
-                    answer_distribution=distribution,
-                    leaderboard=leaderboard,
-                ).model_dump(by_alias=True),
-            },
-        )
+            leaderboard = await game_service.get_leaderboard(db, room_code)
+            await connection_manager.broadcast_to_room(
+                room_code,
+                {
+                    "type": WSMessageType.QUESTION_ENDED.value,
+                    "payload": WSQuestionEnded(
+                        question_id=str(question.question_id),
+                        correct_answer_ids=correct_ids,
+                        answer_distribution=distribution,
+                        leaderboard=leaderboard,
+                    ).model_dump(by_alias=True),
+                },
+            )
 
 
 async def end_game(db: AsyncSession, room_code: str) -> None:
