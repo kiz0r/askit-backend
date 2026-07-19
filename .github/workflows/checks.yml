@@ -44,8 +44,8 @@ jobs:
       POSTGRES_PORT: 5432
       REDIS_HOST: localhost
       REDIS_PORT: 6379
-      JWT_ACCESS_SECRET: ci-access-secret
-      JWT_REFRESH_SECRET: ci-refresh-secret
+      JWT_ACCESS_SECRET: ci-access-secret-not-for-production-use-0000
+      JWT_REFRESH_SECRET: ci-refresh-secret-not-for-production-use-000
 
     steps:
       - name: 📥 Checkout
