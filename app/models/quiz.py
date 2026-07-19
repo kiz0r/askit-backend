@@ -25,8 +25,15 @@ if TYPE_CHECKING:
 quiz_tags = Table(
     "quiz_tags",
     Base.metadata,
-    Column("quiz_id", UUID, ForeignKey("quizzes.quiz_id"), primary_key=True),
-    Column("tag_id", UUID, ForeignKey("tags.tag_id"), primary_key=True),
+    Column(
+        "quiz_id",
+        UUID,
+        ForeignKey("quizzes.quiz_id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "tag_id", UUID, ForeignKey("tags.tag_id", ondelete="CASCADE"), primary_key=True
+    ),
 )
 
 quiz_favorites = Table(
