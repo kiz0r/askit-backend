@@ -6,22 +6,27 @@ Real-time quiz platform backend. Hosts run quiz sessions; players join via room 
 
 - **Python 3.12** · FastAPI · SQLAlchemy (async) · Alembic
 - **PostgreSQL 16** (asyncpg driver)
-- **Redis 7** — pub/sub for WebSocket scaling, leaderboard state
+- **Redis 7** — ephemeral game session state (question order, per-question timers, answer/dedup tracking)
 - **Pydantic v2** · PyJWT · Argon2 · structlog · slowapi
 
 ## Local setup
 
+Requires [uv](https://docs.astral.sh/uv/) and Docker.
+
 ```bash
-# 1. Copy env and fill in values
+# 1. Install dependencies
+uv sync
+
+# 2. Copy env and fill in values
 cp .env.example .env
 
-# 2. Start Postgres + Redis (requires Docker)
-docker-compose up -d askit_db redis
+# 3. Start Postgres + Redis
+docker compose up -d askit_db redis
 
-# 3. Apply migrations
+# 4. Apply migrations
 uv run alembic upgrade head
 
-# 4. Run the dev server
+# 5. Run the dev server
 uv run uvicorn app.main:app --reload
 ```
 
@@ -33,32 +38,17 @@ API docs: http://localhost:8000/docs
 uv run pytest
 ```
 
-Tests use a separate `askit_test` database created automatically by `docker-compose up` (see `scripts/create_test_db.sh`). Make sure containers are running before running tests.
+Tests use a separate `askit_test` database created automatically by `docker compose up` (see `scripts/create_test_db.sh`). Make sure the containers are running first.
 
 ## Architecture
 
 ```
 app/
-├── auth/        # JWT cookie auth, rate limiting
-├── game/        # WebSocket game engine, scoring, leaderboard
-├── quiz/        # Quiz CRUD, publish/unpublish, favorites, stats
-├── user/        # Profile, password change, game history
-├── core/        # Exception handlers, limiter
-├── models/      # SQLAlchemy ORM models
-└── main.py      # App factory, middleware, routers
+├── auth/     # JWT cookie auth, rate limiting
+├── game/     # WebSocket game engine, scoring, leaderboard
+├── quiz/     # Quiz CRUD, publish/unpublish, favorites, stats
+├── user/     # Profile, password change, game history
+├── core/     # Exception handlers, middleware, rate limiter
+├── models/   # SQLAlchemy ORM models
+└── main.py   # App factory, lifespan, routers
 ```
-
-Detailed module docs in `docs/`:
-- `AUTH_MODULE.md` — token lifecycle, cookie strategy
-- `GAME_MODULE.md` — WebSocket protocol, Redis keys, game state machine
-- `USER_MODULE.md` — profile and history endpoints
-- `DATABASE_SCHEMA.md` — full ERD and table descriptions
-- `API_DESIGN_RULES.md` — naming conventions, error envelope format
-
-## WebSocket game protocol
-
-Connect: `ws://localhost:8000/ws/game/{room_code}?playerId={id}`
-
-Key server→client events: `room_state`, `player_joined`, `game_starting`, `question`, `answer_result`, `question_ended` (with `answerDistribution`), `leaderboard` (with `change`), `game_finished`.
-
-Key client→server events: `start_game`, `submit_answer`.
