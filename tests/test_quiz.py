@@ -96,25 +96,31 @@ async def test_delete_quiz(client: AsyncClient) -> None:
 
 async def test_publish_empty_quiz_fails(client: AsyncClient) -> None:
     quiz_id = await _create_quiz(client, with_question=False)
-    resp = await client.post(f"/api/v1/quiz/{quiz_id}/publish")
-    assert resp.status_code in (409, 422)
+    resp = await client.patch(
+        f"/api/v1/quiz/{quiz_id}/status", json={"status": "published"}
+    )
+    assert resp.status_code == 422
 
 
 async def test_publish_and_unpublish(client: AsyncClient) -> None:
     quiz_id = await _create_quiz(client, with_question=True)
 
-    pub = await client.post(f"/api/v1/quiz/{quiz_id}/publish")
+    pub = await client.patch(
+        f"/api/v1/quiz/{quiz_id}/status", json={"status": "published"}
+    )
     assert pub.status_code == 200
     assert pub.json()["status"] == "published"
 
-    unpub = await client.post(f"/api/v1/quiz/{quiz_id}/unpublish")
+    unpub = await client.patch(
+        f"/api/v1/quiz/{quiz_id}/status", json={"status": "draft"}
+    )
     assert unpub.status_code == 200
     assert unpub.json()["status"] == "draft"
 
 
 async def test_cannot_edit_published_quiz(client: AsyncClient) -> None:
     quiz_id = await _create_quiz(client, with_question=True)
-    await client.post(f"/api/v1/quiz/{quiz_id}/publish")
+    await client.patch(f"/api/v1/quiz/{quiz_id}/status", json={"status": "published"})
     resp = await client.patch(f"/api/v1/quiz/{quiz_id}", json={"title": "New Title"})
     assert resp.status_code == 409
 
@@ -122,10 +128,10 @@ async def test_cannot_edit_published_quiz(client: AsyncClient) -> None:
 async def test_favorite_add_and_remove(client: AsyncClient) -> None:
     quiz_id = await _create_quiz(client)
 
-    add = await client.post(f"/api/v1/quiz/{quiz_id}/favorite")
+    add = await client.post(f"/api/v1/quiz/{quiz_id}/favorite/toggle")
     assert add.status_code == 200
     assert add.json()["isFavorited"] is True
 
-    remove = await client.delete(f"/api/v1/quiz/{quiz_id}/favorite")
+    remove = await client.post(f"/api/v1/quiz/{quiz_id}/favorite/toggle")
     assert remove.status_code == 200
     assert remove.json()["isFavorited"] is False
