@@ -78,7 +78,7 @@ class GamePlayer(Base):
         primary_key=True, default=uuid.uuid4, index=True
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("game_sessions.session_id"), index=True
+        ForeignKey("game_sessions.session_id", ondelete="CASCADE"), index=True
     )
 
     nickname: Mapped[str] = mapped_column(VARCHAR(30))
@@ -111,7 +111,7 @@ class GamePlayerAnswer(Base):
         primary_key=True, default=uuid.uuid4, index=True
     )
     player_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("game_players.player_id"), index=True
+        ForeignKey("game_players.player_id", ondelete="CASCADE"), index=True
     )
     question_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("quiz_questions.question_id", ondelete="CASCADE")
