@@ -10,7 +10,8 @@ from alembic import context  # type: ignore[attr-defined]
 from app.database import Base
 from app.settings import ENV_SETTINGS
 
-# Import all models to ensure they are registered with Base.metadata
+# Import all models so their tables register on Base.metadata for autogenerate.
+import app.models  # noqa: E402,F401
 
 # this is the Alembic Config object
 config = context.config
