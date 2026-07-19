@@ -45,9 +45,15 @@ async def revoke_ws_token(token: str) -> None:
     await client.delete(_WS_TOKEN_KEY.format(token))
 
 
+def _login_attempts_key(email: str) -> str:
+    # Normalize so lockout counting cannot be bypassed by changing the
+    # casing or surrounding whitespace of the email address.
+    return _LOGIN_ATTEMPTS_KEY.format(email.strip().lower())
+
+
 async def record_failed_login(email: str) -> int:
     client = get_redis_client()
-    key = _LOGIN_ATTEMPTS_KEY.format(email)
+    key = _login_attempts_key(email)
     count: int = int(await client.incr(key))
     if count == 1:
         await client.expire(key, LOGIN_LOCKOUT_TTL)
@@ -56,10 +62,10 @@ async def record_failed_login(email: str) -> int:
 
 async def reset_login_attempts(email: str) -> None:
     client = get_redis_client()
-    await client.delete(_LOGIN_ATTEMPTS_KEY.format(email))
+    await client.delete(_login_attempts_key(email))
 
 
 async def get_login_attempts(email: str) -> int:
     client = get_redis_client()
-    val = await client.get(_LOGIN_ATTEMPTS_KEY.format(email))
+    val = await client.get(_login_attempts_key(email))
     return int(val) if val else 0
