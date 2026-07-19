@@ -375,7 +375,7 @@ class QuizService:
             )
         )
         quizzes = result.scalars().all()
-        return [self.quiz_to_response(quiz) for quiz in quizzes]
+        return [self.quiz_to_response(quiz, is_favorited=True) for quiz in quizzes]
 
     async def get_quiz_stats(
         self,
