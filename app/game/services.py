@@ -343,14 +343,16 @@ class GameService:
         if await cast(Awaitable[int], redis_client.sismember(answered_key, player_id)):
             raise AlreadyAnsweredError()
 
-        # Get question
-        result = await db.execute(
-            select(QuizQuestion)
-            .where(QuizQuestion.question_id == UUID(question_id))
-            .options(selectinload(QuizQuestion.answers))
-        )
-        question = result.scalars().first()
-        if question is None:
+        # Validate the client-supplied question_id against the current active
+        # question. A player must not be able to answer a different question,
+        # and a malformed id must not reach UUID() and surface as a 500.
+        try:
+            submitted_question_id = UUID(question_id)
+        except ValueError:
+            raise QuestionNotActiveError()
+
+        question = await self.get_current_question(db, room_code)
+        if question is None or question.question_id != submitted_question_id:
             raise QuestionNotActiveError()
 
         # Calculate time taken
