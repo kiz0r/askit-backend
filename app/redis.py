@@ -17,7 +17,7 @@ async def init_redis() -> None:
 async def close_redis() -> None:
     global redis_pool
     if redis_pool:
-        await redis_pool.disconnect()
+        await redis_pool.aclose()
         redis_pool = None
 
 
