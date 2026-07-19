@@ -35,6 +35,7 @@ from .schemas import (
     RoomResponse,
     WSAnswerOption,
     WSAnswerResult,
+    WSGameFinished,
     WSLeaderboardEntry,
     WSQuestion,
     WSRoomState,
@@ -635,6 +636,37 @@ class GameService:
             total_questions=question_count,
             current_question_index=session.current_question_index,
             current_question=current_question,
+        )
+
+    async def build_game_finished(
+        self,
+        db: AsyncSession,
+        room_code: str,
+    ) -> WSGameFinished | None:
+        """Build the final results payload for a finished game."""
+        session = await self.get_room(db, room_code)
+        if session is None:
+            return None
+
+        leaderboard = await self.get_leaderboard(db, room_code)
+
+        duration_ms = 0
+        if session.started_at and session.ended_at:
+            duration_ms = int(
+                (session.ended_at - session.started_at).total_seconds() * 1000
+            )
+        elif session.started_at:
+            duration_ms = int(
+                (
+                    datetime.now(timezone.utc).replace(tzinfo=None) - session.started_at
+                ).total_seconds()
+                * 1000
+            )
+
+        return WSGameFinished(
+            final_leaderboard=leaderboard,
+            total_questions=len(session.quiz.questions),
+            duration_ms=duration_ms,
         )
 
     async def build_question_message(
