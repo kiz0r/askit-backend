@@ -96,7 +96,7 @@ class QuizSettingsCreate(BaseModel):
         serialization_alias="defaultTimePerQuestion",
         validation_alias="defaultTimePerQuestion",
     )
-    visibility: QuizVisibility = QuizVisibility.public
+    visibility: QuizVisibility = QuizVisibility.private
     max_participants: int = Field(
         default=DEFAULT_MAX_PARTICIPANTS,
         ge=1,

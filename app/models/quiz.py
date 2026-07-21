@@ -79,7 +79,7 @@ class Quiz(Base):
     default_time_per_question: Mapped[int] = mapped_column(Integer, default=30_000)
     visibility: Mapped[QuizVisibility] = mapped_column(
         Enum(QuizVisibility, native_enum=False),
-        default=QuizVisibility.public,
+        default=QuizVisibility.private,
     )
     status: Mapped[QuizStatus] = mapped_column(
         Enum(QuizStatus, native_enum=False),
