@@ -24,7 +24,12 @@ class UserService:
             userId=UserId(user.id),
             username=user.username,
             email=user.email,
+            createdAt=user.created_at,
         )
+
+    async def deactivate_account(self, db: AsyncSession, user: User) -> None:
+        user.is_active = False
+        await db.commit()
 
     async def create_user(
         self, db: AsyncSession, username: str, email: EmailStr, password: str

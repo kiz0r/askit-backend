@@ -1,6 +1,6 @@
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
@@ -22,6 +22,7 @@ async def get_user_profile(current_user: User = Depends(get_current_user)) -> Us
         userId=UserId(current_user.id),
         username=str(current_user.username),
         email=str(current_user.email),
+        createdAt=current_user.created_at,
     )
 
 
@@ -47,6 +48,22 @@ async def change_password(
     await user_service.change_password(
         db, current_user, data.current_password, data.next_password
     )
+    return MessageResponse(message="OK")
+
+
+@router.post("/deactivate", response_model=MessageResponse)
+@limiter.limit("3/minute")
+async def deactivate_account(
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
+) -> MessageResponse:
+    await user_service.deactivate_account(db, current_user)
+    # No token blacklisting is needed: get_current_user rejects inactive
+    # users, so the existing access/refresh tokens are already unusable.
+    response.delete_cookie("access_token")
+    response.delete_cookie("refresh_token")
     return MessageResponse(message="OK")
 
 
