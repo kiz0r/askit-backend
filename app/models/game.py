@@ -51,6 +51,7 @@ class GameSession(Base):
     randomize_questions: Mapped[bool] = mapped_column(default=False)
     randomize_answers: Mapped[bool] = mapped_column(default=False)
     show_immediate_feedback: Mapped[bool] = mapped_column(default=True)
+    public_results: Mapped[bool] = mapped_column(default=True)
 
     status: Mapped[GameSessionStatus] = mapped_column(
         Enum(GameSessionStatus, native_enum=False),

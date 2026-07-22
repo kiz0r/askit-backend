@@ -36,6 +36,7 @@ from .schemas import (
     PlayerInfo,
     RoomResponse,
     StartGameMessage,
+    WSGameFinished,
     WSGameStarting,
     WSHostAnswerUpdate,
     WSMessageType,
@@ -170,11 +171,16 @@ async def websocket_player_endpoint(
     if session.status == GameSessionStatus.finished:
         finished = await game_service.build_game_finished(db, room_code)
         if finished:
+            payload = (
+                finished
+                if session.public_results
+                else _game_finished_for_player(finished, player_id)
+            )
             await connection_manager.send_to_player(
                 player_id,
                 {
                     "type": WSMessageType.GAME_FINISHED.value,
-                    "payload": finished.model_dump(by_alias=True),
+                    "payload": payload.model_dump(by_alias=True),
                 },
             )
 
@@ -588,6 +594,18 @@ async def question_timeout(
             )
 
 
+def _game_finished_for_player(
+    finished: WSGameFinished, player_id: str
+) -> WSGameFinished:
+    """Restrict the final leaderboard to the player's own entry.
+
+    Used for sessions configured with private results, so a player sees only
+    their own final score and rank, never the other participants'.
+    """
+    own_entry = [e for e in finished.final_leaderboard if e.player_id == player_id]
+    return finished.model_copy(update={"final_leaderboard": own_entry})
+
+
 async def end_game(db: AsyncSession, room_code: str) -> None:
     session = await game_service.get_room(db, room_code)
     if session is None:
@@ -601,13 +619,33 @@ async def end_game(db: AsyncSession, room_code: str) -> None:
     if finished is None:
         return
 
-    await connection_manager.broadcast_to_room(
-        room_code,
-        {
-            "type": WSMessageType.GAME_FINISHED.value,
-            "payload": finished.model_dump(by_alias=True),
-        },
-    )
+    if session.public_results:
+        await connection_manager.broadcast_to_room(
+            room_code,
+            {
+                "type": WSMessageType.GAME_FINISHED.value,
+                "payload": finished.model_dump(by_alias=True),
+            },
+        )
+    else:
+        await connection_manager.send_to_host(
+            room_code,
+            {
+                "type": WSMessageType.GAME_FINISHED.value,
+                "payload": finished.model_dump(by_alias=True),
+            },
+        )
+        for player in session.players:
+            target_id = str(player.player_id)
+            await connection_manager.send_to_player(
+                target_id,
+                {
+                    "type": WSMessageType.GAME_FINISHED.value,
+                    "payload": _game_finished_for_player(
+                        finished, target_id
+                    ).model_dump(by_alias=True),
+                },
+            )
 
     await game_service.clear_ranking_state(room_code)
 
