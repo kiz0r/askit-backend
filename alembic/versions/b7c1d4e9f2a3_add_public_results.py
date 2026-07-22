@@ -1,0 +1,36 @@
+"""add public_results to game sessions
+
+Revision ID: b7c1d4e9f2a3
+Revises: 472febf91abc
+Create Date: 2026-07-22 00:00:00.000000
+
+"""
+
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+
+
+# revision identifiers, used by Alembic.
+revision: str = "b7c1d4e9f2a3"
+down_revision: Union[str, None] = "472febf91abc"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    op.add_column(
+        "game_sessions",
+        sa.Column(
+            "public_results",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.true(),
+        ),
+    )
+    op.alter_column("game_sessions", "public_results", server_default=None)
+
+
+def downgrade() -> None:
+    op.drop_column("game_sessions", "public_results")

@@ -25,6 +25,11 @@ class CreateRoomRequest(BaseModel):
         serialization_alias="showImmediateFeedback",
         validation_alias="showImmediateFeedback",
     )
+    public_results: bool = Field(
+        default=True,
+        serialization_alias="publicResults",
+        validation_alias="publicResults",
+    )
 
     model_config = {"populate_by_name": True}
 
@@ -201,6 +206,7 @@ class WSGameFinished(BaseModel):
     )
     total_questions: int = Field(serialization_alias="totalQuestions")
     duration_ms: int = Field(serialization_alias="durationMs")
+    public_results: bool = Field(default=True, serialization_alias="publicResults")
 
     model_config = {"populate_by_name": True}
 
@@ -227,6 +233,12 @@ class WSRoomState(BaseModel):
     current_question_index: int = Field(serialization_alias="currentQuestionIndex")
     current_question: WSQuestion | None = Field(
         default=None, serialization_alias="currentQuestion"
+    )
+    host_answer_details: list[WSHostAnswerUpdate] = Field(
+        default_factory=list, serialization_alias="hostAnswerDetails"
+    )
+    question_ended: WSQuestionEnded | None = Field(
+        default=None, serialization_alias="questionEnded"
     )
 
     model_config = {"populate_by_name": True}
