@@ -36,8 +36,10 @@ from .schemas import (
     WSAnswerOption,
     WSAnswerResult,
     WSGameFinished,
+    WSHostAnswerUpdate,
     WSLeaderboardEntry,
     WSQuestion,
+    WSQuestionEnded,
     WSRoomState,
 )
 
@@ -106,6 +108,7 @@ class GameService:
             randomize_questions=data.randomize_questions,
             randomize_answers=data.randomize_answers,
             show_immediate_feedback=data.show_immediate_feedback,
+            public_results=data.public_results,
         )
         db.add(session)
         await db.commit()
@@ -615,6 +618,8 @@ class GameService:
         question_count = len(session.quiz.questions)
 
         current_question: WSQuestion | None = None
+        host_answer_details: list[WSHostAnswerUpdate] = []
+        question_ended: WSQuestionEnded | None = None
         if session.status in (GameSessionStatus.question, GameSessionStatus.revealing):
             question = await self.get_current_question(db, room_code)
             if question is not None:
@@ -625,6 +630,21 @@ class GameService:
                     room_code=room_code,
                     randomize_answers=session.randomize_answers,
                 )
+                host_answer_details = await self.build_host_answer_details(
+                    db, session, question
+                )
+
+                if session.status == GameSessionStatus.revealing:
+                    question_ended = WSQuestionEnded(
+                        question_id=str(question.question_id),
+                        correct_answer_ids=[
+                            str(a.answer_id) for a in question.answers if a.is_correct
+                        ],
+                        answer_distribution=await self.compute_answer_distribution(
+                            db, session.session_id, question
+                        ),
+                        leaderboard=await self.get_leaderboard(db, room_code),
+                    )
 
         return WSRoomState(
             session_id=str(session.session_id),
@@ -636,7 +656,44 @@ class GameService:
             total_questions=question_count,
             current_question_index=session.current_question_index,
             current_question=current_question,
+            host_answer_details=host_answer_details,
+            question_ended=question_ended,
         )
+
+    async def build_host_answer_details(
+        self,
+        db: AsyncSession,
+        session: GameSession,
+        question: QuizQuestion,
+    ) -> list[WSHostAnswerUpdate]:
+        """Rebuild the host's per-player answer feed for the current question.
+
+        Used on host reconnection so the answered-count and answer breakdown
+        survive a page reload mid-question.
+        """
+        result = await db.execute(
+            select(GamePlayerAnswer, GamePlayer)
+            .join(GamePlayer, GamePlayerAnswer.player_id == GamePlayer.player_id)
+            .where(
+                GamePlayer.session_id == session.session_id,
+                GamePlayerAnswer.question_id == question.question_id,
+            )
+        )
+
+        details: list[WSHostAnswerUpdate] = []
+        for answer, player in result.all():
+            details.append(
+                WSHostAnswerUpdate(
+                    player_id=str(player.player_id),
+                    nickname=player.nickname,
+                    is_correct=answer.is_correct,
+                    answer_ids=json.loads(answer.selected_answer_ids),
+                    time_taken_ms=answer.time_taken_ms,
+                    total_score=player.score,
+                )
+            )
+
+        return details
 
     async def build_game_finished(
         self,
@@ -667,6 +724,7 @@ class GameService:
             final_leaderboard=leaderboard,
             total_questions=len(session.quiz.questions),
             duration_ms=duration_ms,
+            public_results=session.public_results,
         )
 
     async def build_question_message(
