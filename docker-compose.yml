@@ -35,6 +35,11 @@ services:
       - redis
     volumes:
       - .:/app
+      # Keep the container's virtualenv out of the bind mount. Without this the
+      # host directory shadows the image's /app/.venv, and uv inside the
+      # container rewrites the host's .venv with container-only shebangs
+      # (#!/app/.venv/bin/python3), which breaks the local pre-commit hooks.
+      - /app/.venv
 
 volumes:
   postgres_data:

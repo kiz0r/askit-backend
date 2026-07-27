@@ -52,11 +52,18 @@ def _validate_tags(v: list[str] | None) -> list[str] | None:
     if v is None:
         return None
     validated = []
-    for tag in v:
-        tag = tag.strip().lower()
-        if tag and len(tag) <= MAX_TAG_LENGTH:
-            validated.append(tag)
-    unique_tags = list(set(validated))
+    for raw_tag in v:
+        tag = raw_tag.strip().lower()
+        if not tag:
+            continue
+        if len(tag) > MAX_TAG_LENGTH:
+            raise InvalidQuizDataError(
+                f"Quiz tags must not exceed {MAX_TAG_LENGTH} characters"
+            )
+        validated.append(tag)
+    # dict.fromkeys de-duplicates while preserving the order the author entered,
+    # so the tag list a client sends is the one it reads back in the response.
+    unique_tags = list(dict.fromkeys(validated))
     if len(unique_tags) > MAX_TAGS_PER_QUIZ:
         raise InvalidQuizDataError(f"Maximum {MAX_TAGS_PER_QUIZ} tags allowed per quiz")
     return unique_tags

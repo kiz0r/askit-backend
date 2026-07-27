@@ -738,7 +738,11 @@ class GameService:
         """Build question message for players."""
         answers = list(question.answers)
         if randomize_answers:
-            random.shuffle(answers)
+            # Seeded from the question id so the order is stable for the whole
+            # question: a client that reconnects mid-question is rebuilt the
+            # same message it first received, rather than seeing the options
+            # (and their letters and colours) jump to a new order.
+            random.Random(str(question.question_id)).shuffle(answers)
 
         redis_client = get_redis_client()
         question_start = await redis_client.get(
