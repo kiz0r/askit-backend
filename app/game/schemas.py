@@ -60,8 +60,6 @@ class PlayerInfo(BaseModel):
 
 class WSMessageType(str, Enum):
     # Client → Server
-    JOIN = "join"
-    LEAVE = "leave"
     ANSWER = "answer"
     START_GAME = "start_game"
     NEXT_QUESTION = "next_question"
@@ -76,7 +74,6 @@ class WSMessageType(str, Enum):
     ANSWER_RESULT = "answer_result"
     PLAYER_ANSWERED = "player_answered"
     QUESTION_ENDED = "question_ended"
-    LEADERBOARD = "leaderboard"
     GAME_FINISHED = "game_finished"
     HOST_ANSWER_UPDATE = "host_answer_update"
 
@@ -189,13 +186,6 @@ class WSLeaderboardEntry(BaseModel):
     nickname: str
     score: int
     change: int = 0
-
-    model_config = {"populate_by_name": True}
-
-
-class WSLeaderboard(BaseModel):
-    entries: list[WSLeaderboardEntry]
-    question_index: int = Field(serialization_alias="questionIndex")
 
     model_config = {"populate_by_name": True}
 
