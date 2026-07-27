@@ -21,7 +21,6 @@ from app.core.middleware import (
     RequestIDMiddleware,
     SecurityHeadersMiddleware,
 )
-from app.database import init_db
 from app.game.router import router as game_router
 from app.game.router import ws_router
 from app.quiz.router import router as quiz_router
@@ -44,7 +43,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         environment=ENV_SETTINGS.ENVIRONMENT,
         port=ENV_SETTINGS.APP_PORT,
     )
-    await init_db()
     await init_redis()
     logger.info("redis_connected", host=ENV_SETTINGS.REDIS_HOST)
     yield

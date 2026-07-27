@@ -22,4 +22,6 @@ COPY ./alembic ./alembic
 ENV PYTHONPATH=/app
 
 # Run the application using uv
-CMD ["uv", "run", "--no-dev", "python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Apply any pending migrations before serving: the schema is owned by Alembic,
+# not created at application startup.
+CMD ["sh", "-c", "uv run --no-dev alembic upgrade head && uv run --no-dev python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"]
