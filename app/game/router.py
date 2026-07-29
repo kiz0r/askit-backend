@@ -273,7 +273,7 @@ async def websocket_host_endpoint(
     await connection_manager.connect_host(websocket, room_code)
 
     try:
-        room_state = await game_service.build_room_state(db, room_code)
+        room_state = await game_service.build_room_state(db, room_code, for_host=True)
     except Exception as e:
         logger.error("room_state_sync_failed", error=str(e), room_code=room_code)
         await connection_manager.disconnect_host(websocket, room_code)

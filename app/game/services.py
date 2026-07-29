@@ -599,8 +599,17 @@ class GameService:
         self,
         db: AsyncSession,
         room_code: str,
+        *,
+        for_host: bool = False,
     ) -> WSRoomState | None:
-        """Build full room state for sync."""
+        """Build full room state for sync.
+
+        ``for_host`` gates the fields that only the host may see. The per-player
+        answer feed reveals which players have answered and, through their
+        selected answer ids, what the correct answer is while the question is
+        still running, so it must never reach a player's connection. It defaults
+        to off so a new call site leaks nothing by omission.
+        """
         session = await self.get_room(db, room_code)
         if session is None:
             return None
@@ -630,9 +639,10 @@ class GameService:
                     room_code=room_code,
                     randomize_answers=session.randomize_answers,
                 )
-                host_answer_details = await self.build_host_answer_details(
-                    db, session, question
-                )
+                if for_host:
+                    host_answer_details = await self.build_host_answer_details(
+                        db, session, question
+                    )
 
                 if session.status == GameSessionStatus.revealing:
                     question_ended = WSQuestionEnded(

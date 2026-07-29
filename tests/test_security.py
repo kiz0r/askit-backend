@@ -1,11 +1,15 @@
-"""Reproductions for the findings raised in the supervisor's code review.
+"""Regression tests for access-control boundaries between users and roles.
 
-These tests assert the CURRENT (vulnerable) behaviour, so they pass today and
-document exactly what an attacker can do. Once the findings are fixed they must
-be inverted into regression tests.
+Each test here corresponds to a defect that was reachable at some point: reading
+another user's quiz through the favorites list, and receiving host-only game
+state as a player.
 """
 
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.game.services import game_service
+from app.user.services.user_service import user_service
 
 VICTIM = {
     "username": "victim",
@@ -87,16 +91,50 @@ async def test_owner_can_still_favorite_own_quiz(client: AsyncClient) -> None:
     assert untoggled.json()["isFavorited"] is False
 
 
-async def test_m3_player_room_state_carries_host_only_fields(
-    client: AsyncClient,
+async def test_room_state_withholds_the_answer_feed_from_players(
+    client: AsyncClient, db: AsyncSession
 ) -> None:
-    """M3: the room_state payload built for a player includes host-only data."""
-    from app.game.services import game_service
-    from app.game.schemas import WSRoomState
+    """A reconnecting player must not receive the host's per-player answer feed.
 
-    # The single builder is used for both endpoints and takes no audience flag,
-    # so whatever it produces for the host is what the player receives verbatim
-    # (game/router.py sends room_state.model_dump() with no filtering).
-    assert "for_host" not in game_service.build_room_state.__code__.co_varnames
-    assert "host_answer_details" in WSRoomState.model_fields
-    assert "question_ended" in WSRoomState.model_fields
+    The feed carries each player's selected answer ids together with is_correct,
+    so while a question is still running it reveals the correct answer to anyone
+    who reads the frame.
+    """
+    await client.post("/api/v1/auth/register", json=VICTIM)
+    quiz_id = (await client.post("/api/v1/quiz", json=QUIZ)).json()["quizId"]
+    await client.patch(f"/api/v1/quiz/{quiz_id}/status", json={"status": "published"})
+    room_code = (
+        await client.post("/api/v1/game/room", json={"quizId": quiz_id})
+    ).json()["roomCode"]
+
+    host_user = await user_service.get_user_by_email(db, VICTIM["email"])
+    assert host_user is not None
+
+    # Join as a guest: the host may not occupy a player slot in their own game.
+    client.cookies.clear()
+    joined = await client.post(
+        f"/api/v1/game/room/{room_code}/join", json={"nickname": "p1"}
+    )
+    assert joined.status_code == 200
+
+    await game_service.start_game(db, room_code, host_user)
+    await game_service.advance_to_question(db, room_code, 1)
+
+    question = await game_service.get_current_question(db, room_code)
+    assert question is not None
+    correct_id = next(str(a.answer_id) for a in question.answers if a.is_correct)
+    session = await game_service.get_room(db, room_code)
+    assert session is not None
+    player = session.players[0]
+    await game_service.submit_answer(
+        db, room_code, str(player.player_id), str(question.question_id), [correct_id]
+    )
+
+    for_player = await game_service.build_room_state(db, room_code)
+    assert for_player is not None
+    assert for_player.host_answer_details == [], "player must not see the answer feed"
+
+    for_host = await game_service.build_room_state(db, room_code, for_host=True)
+    assert for_host is not None
+    assert len(for_host.host_answer_details) == 1, "host still gets the feed"
+    assert for_host.host_answer_details[0].is_correct is True
