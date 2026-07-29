@@ -138,3 +138,74 @@ async def test_room_state_withholds_the_answer_feed_from_players(
     assert for_host is not None
     assert len(for_host.host_answer_details) == 1, "host still gets the feed"
     assert for_host.host_answer_details[0].is_correct is True
+
+
+REFRESH_USER = {
+    "username": "rotator",
+    "email": "rotator@example.com",
+    "password": "TestPass123!",
+}
+
+
+async def test_refresh_rotates_and_burns_the_presented_token(
+    client: AsyncClient,
+) -> None:
+    """A refresh token is single use: replaying it must be refused."""
+    await client.post("/api/v1/auth/register", json=REFRESH_USER)
+    spent_token = client.cookies["refresh_token"]
+
+    first = await client.post("/api/v1/auth/refresh")
+    assert first.status_code == 200
+    assert client.cookies["refresh_token"] != spent_token, "token must rotate"
+
+    # Replaying the spent token is rejected even though it has not expired.
+    client.cookies.set("refresh_token", spent_token)
+    replayed = await client.post("/api/v1/auth/refresh")
+    assert replayed.status_code == 401
+    assert replayed.json()["errorCode"] == "TOKEN_REVOKED"
+
+
+async def test_password_change_invalidates_tokens_of_other_sessions(
+    client: AsyncClient,
+) -> None:
+    """Changing the password must drop sessions opened under the old one."""
+    await client.post("/api/v1/auth/register", json=REFRESH_USER)
+    stale_access = client.cookies["access_token"]
+    stale_refresh = client.cookies["refresh_token"]
+
+    changed = await client.post(
+        "/api/v1/user/password",
+        json={
+            "currentPassword": REFRESH_USER["password"],
+            "nextPassword": "BrandNewPass456!",
+        },
+    )
+    assert changed.status_code == 200
+
+    # The session that made the change keeps working on its re-issued cookies.
+    assert (await client.get("/api/v1/user/profile")).status_code == 200
+    assert client.cookies["access_token"] != stale_access
+
+    # Another session holding the old cookies does not.
+    client.cookies.set("access_token", stale_access)
+    stale = await client.get("/api/v1/user/profile")
+    assert stale.status_code == 401
+    assert stale.json()["errorCode"] == "TOKEN_REVOKED"
+
+    client.cookies.set("refresh_token", stale_refresh)
+    assert (await client.post("/api/v1/auth/refresh")).status_code == 401
+
+
+async def test_deactivation_invalidates_the_refresh_token(
+    client: AsyncClient,
+) -> None:
+    """A deactivated account cannot mint new access tokens."""
+    await client.post("/api/v1/auth/register", json=REFRESH_USER)
+    refresh_token = client.cookies["refresh_token"]
+
+    assert (await client.post("/api/v1/user/deactivate")).status_code == 200
+
+    client.cookies.set("refresh_token", refresh_token)
+    refused = await client.post("/api/v1/auth/refresh")
+    assert refused.status_code == 401
+    assert refused.json()["errorCode"] == "TOKEN_REVOKED"

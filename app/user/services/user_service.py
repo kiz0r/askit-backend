@@ -29,6 +29,10 @@ class UserService:
 
     async def deactivate_account(self, db: AsyncSession, user: User) -> None:
         user.is_active = False
+        # Invalidate outstanding tokens as well. The is_active check already
+        # blocks protected routes, but the refresh token would otherwise stay
+        # usable for its full seven days.
+        user.token_version += 1
         await db.commit()
 
     async def create_user(
@@ -80,6 +84,8 @@ class UserService:
         if not password_service.verify_password(current_password, user.password_hash):
             raise InvalidCredentialsError()
         user.password_hash = password_service.hash_password(next_password)
+        # Invalidate every token issued under the old password.
+        user.token_version += 1
         await db.commit()
 
 

@@ -32,8 +32,10 @@ class AuthService:
         # Update last login timestamp
         await user_service.update_last_login(db, user)
 
-        access_token = jwt_service.create_access_token(str(user.id))
-        refresh_token = jwt_service.create_refresh_token(str(user.id))
+        access_token = jwt_service.create_access_token(str(user.id), user.token_version)
+        refresh_token = jwt_service.create_refresh_token(
+            str(user.id), user.token_version
+        )
 
         return user, access_token, refresh_token
 

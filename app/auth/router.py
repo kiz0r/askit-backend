@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +26,7 @@ from app.core.security import (
 from app.database import get_async_db
 from app.settings import is_production
 from app.user.schemas import UserCreate, UserLogin, UserOut
+from app.user.types import UserId
 from app.user.services.user_service import user_service
 
 router = APIRouter(tags=["Auth"])
@@ -68,8 +71,12 @@ async def register(
     except UsernameAlreadyExistsError:
         raise RegistrationFailedError()
 
-    access_token = jwt_service.create_access_token(str(created_user.id))
-    refresh_token = jwt_service.create_refresh_token(str(created_user.id))
+    access_token = jwt_service.create_access_token(
+        str(created_user.id), created_user.token_version
+    )
+    refresh_token = jwt_service.create_refresh_token(
+        str(created_user.id), created_user.token_version
+    )
     _set_auth_cookies(response, access_token, refresh_token)
     return user_service.user_to_response(created_user)
 
@@ -104,6 +111,7 @@ async def login(
 async def refresh(
     request: Request,
     response: Response,
+    db: AsyncSession = Depends(get_async_db),
 ) -> MessageResponse:
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token:
@@ -113,15 +121,23 @@ async def refresh(
         raise TokenRevokedError()
 
     payload = jwt_service.verify_refresh_token(refresh_token)
-    user_id = payload["sub"]
 
-    access_token = jwt_service.create_access_token(str(user_id))
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        samesite="lax",
-        secure=is_production(),
+    user = await user_service.get_user_by_id(db, UserId(UUID(payload["sub"])))
+    if user is None or not user.is_active:
+        raise TokenRevokedError()
+
+    if payload.get("ver", 0) != user.token_version:
+        raise TokenRevokedError()
+
+    # Rotate: the presented token is spent, so it goes on the denylist and the
+    # client receives a fresh pair. Replaying the old one now fails, which turns
+    # a stolen refresh token into a single use rather than seven days of access.
+    await blacklist_refresh_token(refresh_token, jwt_service.refresh_token_lifetime)
+
+    _set_auth_cookies(
+        response,
+        jwt_service.create_access_token(str(user.id), user.token_version),
+        jwt_service.create_refresh_token(str(user.id), user.token_version),
     )
     return MessageResponse(message="OK")
 
