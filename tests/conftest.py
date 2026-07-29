@@ -20,7 +20,7 @@ _TEST_DB_URL = (
     ENV_SETTINGS.database_url.rsplit(f"/{ENV_SETTINGS.POSTGRES_DB}", 1)[0]
     + "/askit_test"
 )
-_TEST_REDIS_URL = f"{ENV_SETTINGS.redis_url}/1"
+_TEST_REDIS_URL = ENV_SETTINGS.redis_url  # REDIS_DB=1 comes from .env.test
 
 # NullPool avoids asyncpg connection sharing across task boundaries (BaseHTTPMiddleware compat)
 _engine = create_async_engine(_TEST_DB_URL, echo=False, poolclass=NullPool)
@@ -73,10 +73,21 @@ async def db() -> AsyncGenerator[AsyncSession, None]:
             yield session
 
     app.dependency_overrides[get_async_db] = _override_get_db
+
+    # The WebSocket handlers and the question-timeout task run outside the
+    # request/response cycle and open their own short sessions, so they never
+    # see the dependency override above. Point the factory they call at the
+    # test database too, otherwise they would reach the development one.
+    import app.database as app_database
+
+    original_factory = app_database.AsyncSessionLocal
+    app_database.AsyncSessionLocal = _SessionFactory
+
     async with _SessionFactory() as session:
         try:
             yield session
         finally:
+            app_database.AsyncSessionLocal = original_factory
             app.dependency_overrides.pop(get_async_db, None)
 
 

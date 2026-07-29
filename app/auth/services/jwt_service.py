@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import TypedDict
 
@@ -13,6 +14,8 @@ from app.auth.exceptions import TokenExpiredError, InvalidTokenError
 class JWTPayload(TypedDict):
     sub: str
     type: str
+    ver: int
+    jti: str
     iat: int
     exp: int
 
@@ -26,31 +29,38 @@ class JWTService:
     _algorithm: str = "HS256"
 
     def _create_token(
-        self, subject: str, token_type: str, key: str, expires_in: int
+        self, subject: str, token_type: str, key: str, expires_in: int, version: int
     ) -> str:
         now = datetime.now(timezone.utc)
         payload = {
             "sub": subject,
             "type": token_type,
+            "ver": version,
+            # Without a unique claim two tokens minted for the same subject in
+            # the same second are byte-identical, so rotating a refresh token
+            # would denylist the replacement it just handed out.
+            "jti": str(uuid.uuid4()),
             "iat": now,
             "exp": now + timedelta(seconds=expires_in),
         }
         return str(jwt.encode(payload, key, algorithm=self._algorithm))
 
-    def create_access_token(self, user_id: str) -> str:
+    def create_access_token(self, user_id: str, version: int = 0) -> str:
         return self._create_token(
             subject=user_id,
             token_type="access",
             key=self._access_secret,
             expires_in=self.access_token_lifetime,
+            version=version,
         )
 
-    def create_refresh_token(self, user_id: str) -> str:
+    def create_refresh_token(self, user_id: str, version: int = 0) -> str:
         return self._create_token(
             subject=user_id,
             token_type="refresh",
             key=self._refresh_secret,
             expires_in=self.refresh_token_lifetime,
+            version=version,
         )
 
     def verify_access_token(self, token: str) -> JWTPayload:
@@ -64,8 +74,16 @@ class JWTService:
             raw = jwt.decode(token, key, algorithms=[self._algorithm])
             if raw.get("type") != expected_type:
                 raise InvalidTokenError()
+            # Tokens minted before token_version existed carry no "ver" claim;
+            # they are treated as version 0, which is the value every existing
+            # account starts from.
             return JWTPayload(
-                sub=raw["sub"], type=raw["type"], iat=raw["iat"], exp=raw["exp"]
+                sub=raw["sub"],
+                type=raw["type"],
+                ver=int(raw.get("ver", 0)),
+                jti=str(raw.get("jti", "")),
+                iat=raw["iat"],
+                exp=raw["exp"],
             )
         except ExpiredSignatureError:
             raise TokenExpiredError()

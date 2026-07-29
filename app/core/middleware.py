@@ -51,8 +51,16 @@ class AutoRefreshMiddleware(BaseHTTPMiddleware):
                             )
                         else:
                             payload = jwt_service.verify_refresh_token(refresh_token)
+                            # Carry the version through unchanged. This path does
+                            # not rotate the refresh token, because it fires on
+                            # arbitrary requests and denylisting here would break
+                            # other requests already in flight with the same
+                            # cookie; rotation belongs to /auth/refresh. The
+                            # version still gets checked downstream by
+                            # get_current_user, so a token minted here after a
+                            # password change is rejected like any other stale one.
                             new_access_token = jwt_service.create_access_token(
-                                payload["sub"]
+                                payload["sub"], payload.get("ver", 0)
                             )
 
                             request.scope["headers"] = [

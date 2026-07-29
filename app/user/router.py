@@ -4,11 +4,13 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
+from app.auth.services.jwt_service import jwt_service
 from app.core.limiter import limiter
 from app.core.schemas import MessageResponse
 from app.database import get_async_db
 from app.game.services import game_service
 from app.models.user import User
+from app.settings import is_production
 from .schemas import GameHistoryOut, PasswordChange, UserOut, UserUpdate
 from .services.user_service import user_service
 from .types import UserId
@@ -41,6 +43,7 @@ async def update_profile(
 @limiter.limit("5/minute")
 async def change_password(
     request: Request,
+    response: Response,
     data: PasswordChange,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db),
@@ -48,6 +51,29 @@ async def change_password(
     await user_service.change_password(
         db, current_user, data.current_password, data.next_password
     )
+
+    # The change invalidated every token issued under the old password,
+    # including the caller's own. Re-issue for this session so the user who
+    # made the change stays signed in while other sessions are dropped.
+    secure = is_production()
+    for key, token in (
+        (
+            "access_token",
+            jwt_service.create_access_token(
+                str(current_user.id), current_user.token_version
+            ),
+        ),
+        (
+            "refresh_token",
+            jwt_service.create_refresh_token(
+                str(current_user.id), current_user.token_version
+            ),
+        ),
+    ):
+        response.set_cookie(
+            key=key, value=token, httponly=True, samesite="lax", secure=secure
+        )
+
     return MessageResponse(message="OK")
 
 

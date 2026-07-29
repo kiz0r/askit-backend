@@ -26,9 +26,27 @@ class Settings(BaseSettings):
     POSTGRES_HOST: str = Field(..., min_length=3)
     POSTGRES_PORT: int = 5432
 
+    DB_POOL_SIZE: int = Field(
+        default=20,
+        ge=1,
+        description="Connections kept open per process. Must cover the WebSocket "
+        "connections of a full game room plus concurrent HTTP requests.",
+    )
+    DB_MAX_OVERFLOW: int = Field(
+        default=30,
+        ge=0,
+        description="Extra connections opened above DB_POOL_SIZE under load.",
+    )
+
     # Redis Settings
     REDIS_HOST: str = Field(default="redis")
     REDIS_PORT: int = Field(default=6379)
+    REDIS_DB: int = Field(
+        default=0,
+        ge=0,
+        description="Redis logical database. The test suite uses a separate one "
+        "so a test run never touches development game state.",
+    )
 
     model_config = SettingsConfigDict(env_file=".env")
 
@@ -43,7 +61,7 @@ class Settings(BaseSettings):
     @property
     def redis_url(self) -> str:
         """Build Redis URL."""
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}"
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     @property
     def cors_origins_list(self) -> list[str]:

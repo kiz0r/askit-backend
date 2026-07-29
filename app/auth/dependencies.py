@@ -9,6 +9,7 @@ from app.user.types import UserId
 from app.auth.services.jwt_service import jwt_service
 from app.auth.exceptions import (
     NotAuthenticatedError,
+    TokenRevokedError,
     UserInactiveError,
     TokenExpiredError,
     InvalidTokenError,
@@ -36,6 +37,12 @@ async def get_current_user(
 
     if not user:
         raise NotAuthenticatedError()
+
+    if payload.get("ver", 0) != user.token_version:
+        # Password change or deactivation bumped the version, so every token
+        # issued earlier stops working immediately rather than lingering for
+        # the remainder of its lifetime.
+        raise TokenRevokedError()
 
     if not user.is_active:
         raise UserInactiveError()
@@ -66,6 +73,9 @@ async def get_optional_current_user(
         user = await user_service.get_user_by_id(db, user_id)
 
         if not user or not user.is_active:
+            return None
+
+        if payload.get("ver", 0) != user.token_version:
             return None
 
         return user
