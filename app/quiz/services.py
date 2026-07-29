@@ -332,11 +332,22 @@ class QuizService:
     async def toggle_favorite(
         self, db: AsyncSession, quiz_id: QuizId, user: User
     ) -> FavoriteActionResponse | None:
-        """Toggle favorite state for a quiz. Returns None if quiz not found."""
+        """Toggle favorite state for a quiz. Returns None if quiz not found.
+
+        Only the owner may favorite a quiz. Until public quizzes are exposed for
+        discovery there is no legitimate way to reach someone else's quiz, and
+        without this check the favorites list becomes a read path around
+        ownership: the quiz id of any running game is available from the
+        unauthenticated room endpoint, and list_favorites returns the full quiz
+        including which answers are correct. A quiz belonging to another user is
+        reported as missing rather than forbidden, so the endpoint cannot be used
+        to probe which quiz ids exist.
+        """
         uuid_val = quiz_id
 
         result = await db.execute(select(Quiz).where(Quiz.quiz_id == uuid_val))
-        if result.scalars().first() is None:
+        quiz = result.scalars().first()
+        if quiz is None or quiz.creator_id != user.id:
             return None
 
         existing = await db.execute(
