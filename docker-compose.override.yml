@@ -1,0 +1,29 @@
+# Development conveniences, applied automatically by `docker compose up`.
+#
+# Everything here widens access and must never reach a deployed host, which is
+# why it lives in the file Compose treats as optional rather than in the base.
+# Deployments pass -f docker-compose.yml explicitly and never load this.
+
+services:
+  askit_db:
+    # Published so the test suite, which runs on the host, can reach Postgres,
+    # and so psql works without docker exec.
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Creates the askit_test database on first initialisation.
+      - ./scripts/create_test_db.sh:/docker-entrypoint-initdb.d/create_test_db.sh
+
+  redis:
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  api:
+    volumes:
+      # Live reload from the working copy.
+      - .:/app
+      # Keep the container's virtualenv out of the bind mount. Without this the
+      # host directory shadows the image's /app/.venv, and uv inside the
+      # container rewrites the host's .venv with container-only shebangs
+      # (#!/app/.venv/bin/python3), which breaks the local pre-commit hooks.
+      - /app/.venv

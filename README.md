@@ -38,7 +38,48 @@ API docs: http://localhost:8000/docs
 uv run pytest
 ```
 
-Tests use a separate `askit_test` database created automatically by `docker compose up` (see `scripts/create_test_db.sh`). Make sure the containers are running first.
+Tests use a separate `askit_test` database created automatically by `docker compose up` (see `scripts/create_test_db.sh`). Make sure the containers are running first. Copy `.env` to `.env.test` and point the hosts at `localhost`, since the suite runs outside the containers.
+
+## Deployment
+
+`docker-compose.yml` is the deployable stack and publishes nothing but the API,
+on the loopback interface, for a reverse proxy to pick up. Postgres and Redis
+are reachable only over the compose network.
+
+`docker-compose.override.yml` holds the development conveniences: it publishes
+the database and Redis ports so the test suite can reach them from the host, and
+mounts the working copy for live reload. Compose loads it automatically, so
+`docker compose up` is the development command and deployment passes the base
+file explicitly:
+
+```bash
+docker compose -f docker-compose.yml up -d --build
+```
+
+The split is this way round because an override cannot withdraw a published
+port; overrides append to the ports list. Making the base the closed one means a
+forgotten flag yields a closed stack rather than an exposed database.
+
+The API applies `alembic upgrade head` before it starts serving, and waits for
+the database and Redis health checks first, so a fresh host needs no manual
+migration step.
+
+For `.env` on a deployed host:
+
+| Variable | Value |
+| --- | --- |
+| `ENVIRONMENT` | `production` — this is what marks the auth cookies `Secure` |
+| `LOG_JSON` | `true` |
+| `CORS_ORIGINS` | the site origin, no trailing slash |
+| `POSTGRES_HOST` | `askit_db` — the service name, not `localhost` |
+| `REDIS_HOST` | `redis` |
+| `REDIS_PASSWORD`, `POSTGRES_PASSWORD` | fresh values |
+| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | fresh values, never the development ones |
+
+TLS is not optional: in production the auth cookies carry `Secure`, so over
+plain HTTP the browser discards them and nobody can sign in. Terminating TLS at
+the proxy and serving the frontend from the same origin also keeps `SameSite=Lax`
+effective and takes CORS out of the picture entirely.
 
 ## Architecture
 

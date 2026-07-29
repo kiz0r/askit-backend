@@ -1,4 +1,5 @@
 from typing import Literal
+from urllib.parse import quote
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
@@ -41,6 +42,11 @@ class Settings(BaseSettings):
     # Redis Settings
     REDIS_HOST: str = Field(default="redis")
     REDIS_PORT: int = Field(default=6379)
+    REDIS_PASSWORD: str = Field(
+        default="",
+        description="Empty means no authentication, which is only acceptable "
+        "when Redis is not reachable from outside the container network.",
+    )
     REDIS_DB: int = Field(
         default=0,
         ge=0,
@@ -60,8 +66,14 @@ class Settings(BaseSettings):
 
     @property
     def redis_url(self) -> str:
-        """Build Redis URL."""
-        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        """Build Redis URL, with credentials when a password is configured."""
+        # quote() so a password containing @ or / cannot break the URL apart.
+        credentials = (
+            f":{quote(self.REDIS_PASSWORD, safe='')}@" if self.REDIS_PASSWORD else ""
+        )
+        return (
+            f"redis://{credentials}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        )
 
     @property
     def cors_origins_list(self) -> list[str]:

@@ -1,45 +1,73 @@
+# Base stack, safe to run on a public host.
+#
+# Nothing here is published beyond the loopback interface: the database and
+# Redis are reachable only over the compose network, and the API sits behind a
+# reverse proxy that terminates TLS.
+#
+#   production   docker compose -f docker-compose.yml up -d --build
+#   development  docker compose up -d          (adds docker-compose.override.yml)
+#
+# The split exists because a published port cannot be withdrawn by an override
+# file: overrides append to the ports list, so the base has to be the closed one
+# and the development file opens what it needs.
+
 services:
   askit_db:
     image: postgres:16
     container_name: askit_postgres
     restart: unless-stopped
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/create_test_db.sh:/docker-entrypoint-initdb.d/create_test_db.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
 
   redis:
     image: redis:7-alpine
     container_name: askit_redis
     restart: unless-stopped
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    # A password on top of an unpublished port: defence in depth, and it keeps
+    # the store closed if the compose network is ever shared with another stack.
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    security_opt:
+      - no-new-privileges:true
 
   api:
     build: .
     container_name: askit_api
     restart: unless-stopped
+    # Loopback only. The reverse proxy forwards to this port; the API itself is
+    # never exposed to the network directly.
     ports:
-      - "${APP_PORT:-8000}:8000"
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
     env_file:
       - .env
     depends_on:
-      - askit_db
-      - redis
-    volumes:
-      - .:/app
-      # Keep the container's virtualenv out of the bind mount. Without this the
-      # host directory shadows the image's /app/.venv, and uv inside the
-      # container rewrites the host's .venv with container-only shebangs
-      # (#!/app/.venv/bin/python3), which breaks the local pre-commit hooks.
-      - /app/.venv
+      # The container applies migrations before starting uvicorn, so it must not
+      # start until the database accepts connections.
+      askit_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   postgres_data:
