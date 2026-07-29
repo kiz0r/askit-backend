@@ -135,3 +135,27 @@ async def test_favorite_add_and_remove(client: AsyncClient) -> None:
     remove = await client.post(f"/api/v1/quiz/{quiz_id}/favorite/toggle")
     assert remove.status_code == 200
     assert remove.json()["isFavorited"] is False
+
+
+async def test_public_visibility_is_refused_until_discovery_exists(
+    client: AsyncClient,
+) -> None:
+    """Nothing serves a public quiz to anyone but its owner, so the API must not
+    accept the value and pretend the quiz was shared."""
+    await client.post("/api/v1/auth/register", json=USER)
+
+    body: dict[str, object] = dict(_QUIZ_WITH_QUESTION)
+    body["settings"] = {
+        "defaultTimePerQuestion": 30000,
+        "maxParticipants": 10,
+        "visibility": "public",
+    }
+
+    refused = await client.post("/api/v1/quiz", json=body)
+    assert refused.status_code == 422
+    assert refused.json()["errorCode"] == "INVALID_QUIZ_DATA"
+
+    # The default path still works and stays private.
+    created = await client.post("/api/v1/quiz", json=_QUIZ_WITH_QUESTION)
+    assert created.status_code == 200
+    assert created.json()["settings"]["visibility"] == "private"

@@ -114,6 +114,22 @@ class QuizSettingsCreate(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    @field_validator("visibility")
+    @classmethod
+    def visibility_supported(cls, v: QuizVisibility) -> QuizVisibility:
+        """Refuse a value the platform cannot yet honour.
+
+        The enum keeps ``public`` as the seam for quiz discovery, but nothing
+        serves a public quiz to anyone but its owner. Accepting the value and
+        storing it would tell a client its quiz had been shared when it had not,
+        so it is rejected at the boundary until discovery exists.
+        """
+        if v is QuizVisibility.public:
+            raise InvalidQuizDataError(
+                "Public quizzes are not supported yet; quizzes must be private."
+            )
+        return v
+
 
 class QuizCreate(BaseModel):
     title: str
