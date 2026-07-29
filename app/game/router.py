@@ -119,6 +119,20 @@ async def join_room(
     )
 
 
+async def _reject_foreign_origin(websocket: WebSocket) -> bool:
+    """Close the socket if the handshake came from an origin we do not serve.
+
+    A WebSocket handshake is not covered by CORS, so the browser will perform it
+    against any origin; the cookies are what the check protects. It applies to
+    both endpoints so that the player socket is no weaker than the host one.
+    """
+    origin = websocket.headers.get("origin")
+    if origin and origin not in ENV_SETTINGS.cors_origins_list:
+        await websocket.close(code=4003, reason="Origin not allowed")
+        return True
+    return False
+
+
 async def _set_player_connected(player_id: str, connected: bool) -> None:
     """Flip a player's connection flag in its own short transaction."""
     async with database.AsyncSessionLocal() as db:
@@ -135,6 +149,9 @@ async def websocket_player_endpoint(
     websocket: WebSocket,
     room_code: str,
 ) -> None:
+    if await _reject_foreign_origin(websocket):
+        return
+
     ws_token = websocket.cookies.get("ws_token")
     if not ws_token:
         await websocket.close(code=4001, reason="Not authenticated")
@@ -255,9 +272,7 @@ async def websocket_host_endpoint(
     websocket: WebSocket,
     room_code: str,
 ) -> None:
-    origin = websocket.headers.get("origin")
-    if origin and origin not in ENV_SETTINGS.cors_origins_list:
-        await websocket.close(code=4003, reason="Origin not allowed")
+    if await _reject_foreign_origin(websocket):
         return
 
     token = websocket.cookies.get("access_token")

@@ -13,7 +13,13 @@ from sqlalchemy.orm import selectinload
 
 from app.core.logging import get_logger
 from app.core.utils import utcnow
-from app.models.game import GamePlayer, GamePlayerAnswer, GameSession, GameSessionStatus
+from app.models.game import (
+    GamePlayer,
+    GamePlayerAnswer,
+    GameSession,
+    GameSessionStatus,
+    generate_room_code,
+)
 from app.models.quiz import Quiz, QuizQuestion
 from app.models.user import User
 from app.redis import get_redis_client
@@ -50,6 +56,9 @@ logger = get_logger(__name__)
 QUESTION_START_KEY = "game:question_start:{room_code}"
 PLAYER_ANSWERED_KEY = "game:answered:{room_code}:{question_index}"
 PREV_RANKING_KEY = "game:prev_ranking:{room_code}"
+
+# How many times to retry room creation when the generated code is taken.
+_ROOM_CODE_ATTEMPTS = 5
 
 # Scoring constants
 MAX_POINTS_PER_QUESTION = 1000
@@ -101,24 +110,44 @@ class GameService:
         if quiz.status != QuizStatus.published:
             raise QuizNotPlayableError()
 
-        # Create game session
-        session = GameSession(
-            quiz_id=quiz.quiz_id,
-            host_id=user.id,
-            randomize_questions=data.randomize_questions,
-            randomize_answers=data.randomize_answers,
-            show_immediate_feedback=data.show_immediate_feedback,
-            public_results=data.public_results,
-        )
-        db.add(session)
-        await db.commit()
+        # Room codes are six characters from a 31-symbol alphabet and are never
+        # released, so the space only shrinks as sessions accumulate. A collision
+        # is very unlikely but not impossible, and the unique index turns one
+        # into a failed request. Retry with a fresh code instead of checking
+        # first, which would leave a window between the check and the insert.
+        # Read these before the loop: a rollback expires every object in the
+        # session, so touching quiz or user again inside it would trigger a lazy
+        # reload.
+        quiz_id = quiz.quiz_id
+        host_id = user.id
+
+        for remaining in range(_ROOM_CODE_ATTEMPTS - 1, -1, -1):
+            session = GameSession(
+                room_code=generate_room_code(),
+                quiz_id=quiz_id,
+                host_id=host_id,
+                randomize_questions=data.randomize_questions,
+                randomize_answers=data.randomize_answers,
+                show_immediate_feedback=data.show_immediate_feedback,
+                public_results=data.public_results,
+            )
+            db.add(session)
+            try:
+                await db.commit()
+                break
+            except IntegrityError:
+                await db.rollback()
+                if remaining == 0:
+                    raise
+                logger.warning("room_code_collision", attempts_left=remaining)
+
         await db.refresh(session)
 
         logger.info(
             "room_created",
             room_code=session.room_code,
-            quiz_id=str(quiz.quiz_id),
-            host_id=str(user.id),
+            quiz_id=str(quiz_id),
+            host_id=str(host_id),
         )
 
         return RoomResponse(

@@ -1,3 +1,4 @@
+import pytest
 import json
 
 from httpx import AsyncClient
@@ -262,3 +263,26 @@ async def test_leaderboard_change_tracking(db: AsyncSession) -> None:
     assert bob_entry.change == 1  # был 2, стал 1 → +1
     assert alice_entry.rank == 2
     assert alice_entry.change == -1  # был 1, стал 2 → -1
+
+
+async def test_room_creation_retries_a_taken_room_code(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A collision on the generated code must not surface as a failed request."""
+    import app.game.services as game_services
+
+    await client.post("/api/v1/auth/register", json=USER)
+    quiz_id = (await client.post("/api/v1/quiz", json=_QUIZ)).json()["quizId"]
+    await client.patch(f"/api/v1/quiz/{quiz_id}/status", json={"status": "published"})
+
+    first = await client.post("/api/v1/game/room", json={"quizId": quiz_id})
+    assert first.status_code == 200
+    taken = first.json()["roomCode"]
+
+    # Hand out the taken code once, then a free one, as a real collision would.
+    codes = iter([taken, "FREE01"])
+    monkeypatch.setattr(game_services, "generate_room_code", lambda: next(codes))
+
+    second = await client.post("/api/v1/game/room", json={"quizId": quiz_id})
+    assert second.status_code == 200, "a collision must be retried, not returned"
+    assert second.json()["roomCode"] == "FREE01"

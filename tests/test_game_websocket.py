@@ -168,3 +168,45 @@ async def test_full_game_over_websockets(client: AsyncClient, live_server: int) 
             leaderboard = finished["payload"]["finalLeaderboard"]
             assert [e["playerId"] for e in leaderboard] == [player_id]
             assert leaderboard[0]["score"] > 0
+
+
+async def test_player_socket_rejects_a_foreign_origin(
+    client: AsyncClient, live_server: int
+) -> None:
+    """The player socket must refuse a handshake from an origin we do not serve.
+
+    A WebSocket handshake is not covered by CORS, so this check, and not the
+    CORS configuration, is what stops another site from opening a socket with
+    the visitor's cookies attached.
+    """
+    base = f"http://127.0.0.1:{live_server}"
+    ws_base = f"ws://127.0.0.1:{live_server}"
+
+    async with AsyncClient(base_url=base) as http:
+        await http.post(
+            "/api/v1/auth/register",
+            json={**HOST, "email": "origin@e.cz", "username": "originhost"},
+        )
+        quiz_id = (await http.post("/api/v1/quiz", json=QUIZ)).json()["quizId"]
+        await http.patch(f"/api/v1/quiz/{quiz_id}/status", json={"status": "published"})
+        room_code = (
+            await http.post("/api/v1/game/room", json={"quizId": quiz_id})
+        ).json()["roomCode"]
+
+    async with AsyncClient(base_url=base) as http:
+        await http.post(f"/api/v1/game/room/{room_code}/join", json={"nickname": "p1"})
+        cookie = f"ws_token={http.cookies['ws_token']}"
+
+    with pytest.raises(websockets.exceptions.InvalidStatus):
+        async with websockets.connect(
+            f"{ws_base}/ws/game/{room_code}",
+            additional_headers={"Cookie": cookie, "Origin": "https://evil.example"},
+        ):
+            pass
+
+    # The same handshake without the foreign origin still succeeds.
+    async with websockets.connect(
+        f"{ws_base}/ws/game/{room_code}",
+        additional_headers={"Cookie": cookie},
+    ) as ws:
+        assert (await _next(ws, "room_state"))["payload"]["roomCode"] == room_code
