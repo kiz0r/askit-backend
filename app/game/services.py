@@ -57,6 +57,12 @@ QUESTION_START_KEY = "game:question_start:{room_code}"
 PLAYER_ANSWERED_KEY = "game:answered:{room_code}:{question_index}"
 PREV_RANKING_KEY = "game:prev_ranking:{room_code}"
 
+# Lifetime of the per-session keys. It is refreshed whenever the game advances,
+# so it bounds inactivity rather than total duration: a question may run for five
+# minutes and the pause before the next one is up to the host, so a long session
+# would otherwise outlive a fixed expiry and lose its question order mid-game.
+SESSION_KEY_TTL = 3600
+
 # How many times to retry room creation when the generated code is taken.
 _ROOM_CODE_ATTEMPTS = 5
 
@@ -270,7 +276,7 @@ class GameService:
         await redis_client.set(
             f"game:questions:{room_code}",
             json.dumps(question_ids),
-            ex=3600,  # 1 hour expiry
+            ex=SESSION_KEY_TTL,
         )
 
         logger.info(
@@ -294,6 +300,7 @@ class GameService:
         redis_client = get_redis_client()
         question_ids_json = await redis_client.get(f"game:questions:{room_code}")
         if not question_ids_json:
+            logger.error("question_order_missing", room_code=room_code)
             return None
 
         question_ids = json.loads(question_ids_json)
@@ -322,9 +329,14 @@ class GameService:
             raise RoomNotFoundError()
 
         redis_client = get_redis_client()
-        question_ids_json = await redis_client.get(f"game:questions:{room_code}")
+        questions_key = f"game:questions:{room_code}"
+        question_ids_json = await redis_client.get(questions_key)
         if not question_ids_json:
+            logger.error("question_order_missing", room_code=room_code)
             return None
+
+        # Push the expiry out while the game is still moving.
+        await redis_client.expire(questions_key, SESSION_KEY_TTL)
 
         question_ids = json.loads(question_ids_json)
 
@@ -501,7 +513,7 @@ class GameService:
         await redis_client.set(
             PREV_RANKING_KEY.format(room_code=room_code),
             json.dumps(new_ranking),
-            ex=3600,
+            ex=SESSION_KEY_TTL,
         )
 
         return entries
