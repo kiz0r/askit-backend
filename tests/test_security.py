@@ -1,8 +1,8 @@
 """Regression tests for access-control boundaries between users and roles.
 
 Each test here corresponds to a defect that was reachable at some point: reading
-another user's quiz through the favorites list, and receiving host-only game
-state as a player.
+another user's quiz through the favorites list, receiving host-only game state
+as a player, and holding a token that a credential change should have ended.
 """
 
 from httpx import AsyncClient
@@ -73,22 +73,6 @@ async def test_foreign_quiz_cannot_be_read_through_favorites(
     # And the favorites list stays empty, so no correct answers are exposed.
     favorites = (await client.get("/api/v1/quiz/favorites/list")).json()
     assert favorites["items"] == []
-
-
-async def test_owner_can_still_favorite_own_quiz(client: AsyncClient) -> None:
-    """The ownership check must not break the legitimate path."""
-    await client.post("/api/v1/auth/register", json=VICTIM)
-    quiz_id = (await client.post("/api/v1/quiz", json=QUIZ)).json()["quizId"]
-
-    toggled = await client.post(f"/api/v1/quiz/{quiz_id}/favorite/toggle")
-    assert toggled.status_code == 200
-    assert toggled.json()["isFavorited"] is True
-
-    favorites = (await client.get("/api/v1/quiz/favorites/list")).json()
-    assert [q["quizId"] for q in favorites["items"]] == [quiz_id]
-
-    untoggled = await client.post(f"/api/v1/quiz/{quiz_id}/favorite/toggle")
-    assert untoggled.json()["isFavorited"] is False
 
 
 async def test_room_state_withholds_the_answer_feed_from_players(

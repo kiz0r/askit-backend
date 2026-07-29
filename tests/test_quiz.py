@@ -132,6 +132,9 @@ async def test_favorite_add_and_remove(client: AsyncClient) -> None:
     assert add.status_code == 200
     assert add.json()["isFavorited"] is True
 
+    listed = await client.get("/api/v1/quiz/favorites/list")
+    assert [q["quizId"] for q in listed.json()["items"]] == [quiz_id]
+
     remove = await client.post(f"/api/v1/quiz/{quiz_id}/favorite/toggle")
     assert remove.status_code == 200
     assert remove.json()["isFavorited"] is False
