@@ -76,6 +76,32 @@ For `.env` on a deployed host:
 | `REDIS_PASSWORD`, `POSTGRES_PASSWORD` | fresh values |
 | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | fresh values, never the development ones |
 
+### Backups
+
+The Docker volume survives a container restart and nothing else. `scripts/backup.sh`
+writes a compressed `pg_dump` of the application database and prunes dumps older
+than `RETENTION_DAYS` (14 by default):
+
+```bash
+BACKUP_DIR=/srv/backups ./scripts/backup.sh
+```
+
+Nightly, from the project directory:
+
+```cron
+0 3 * * * cd /srv/askit/askit-server && BACKUP_DIR=/srv/backups ./scripts/backup.sh >> /var/log/askit-backup.log 2>&1
+```
+
+Restoring into an empty database, which is worth trying once before it is needed:
+
+```bash
+docker exec askit_postgres psql -U "$POSTGRES_USER" -d postgres -c 'create database askit_restore;'
+docker exec -i askit_postgres pg_restore -U "$POSTGRES_USER" -d askit_restore < backups/askit-<stamp>.dump
+```
+
+The dump carries `alembic_version`, so a restored database knows which
+migrations it has and later ones apply on top of it normally.
+
 TLS is not optional: in production the auth cookies carry `Secure`, so over
 plain HTTP the browser discards them and nobody can sign in. Terminating TLS at
 the proxy and serving the frontend from the same origin also keeps `SameSite=Lax`
