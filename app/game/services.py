@@ -202,15 +202,20 @@ class GameService:
         self,
         db: AsyncSession,
         room_code: str,
-        user: User,
+        host_id: UUID,
     ) -> list[QuizQuestion]:
-        """Start the game. Returns questions in play order."""
+        """Start the game. Returns questions in play order.
+
+        Takes the host's id rather than the loaded ``User``: the WebSocket
+        handler that calls this opens a fresh session per message, and an ORM
+        instance must not be carried across that boundary.
+        """
         session = await self.get_room(db, room_code)
 
         if session is None:
             raise RoomNotFoundError()
 
-        if session.host_id != user.id:
+        if session.host_id != host_id:
             raise NotHostError()
 
         if session.status != GameSessionStatus.waiting:

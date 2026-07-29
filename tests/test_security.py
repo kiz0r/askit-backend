@@ -117,7 +117,7 @@ async def test_room_state_withholds_the_answer_feed_from_players(
     )
     assert joined.status_code == 200
 
-    await game_service.start_game(db, room_code, host_user)
+    await game_service.start_game(db, room_code, host_user.id)
     await game_service.advance_to_question(db, room_code, 1)
 
     question = await game_service.get_current_question(db, room_code)
