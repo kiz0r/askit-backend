@@ -21,6 +21,13 @@ COPY ./alembic ./alembic
 # Set Python path
 ENV PYTHONPATH=/app
 
+# Drop privileges. Nothing here needs root at run time, and the application
+# writes only to the database and Redis. uv resolves and runs from /app/.venv,
+# so the whole tree is handed to the unprivileged user.
+RUN useradd --create-home --uid 10001 askit \
+    && chown -R askit:askit /app
+USER askit
+
 # Run the application using uv
 # Apply any pending migrations before serving: the schema is owned by Alembic,
 # not created at application startup.
