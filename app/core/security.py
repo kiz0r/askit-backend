@@ -5,7 +5,12 @@ from app.redis import get_redis_client
 
 MAX_LOGIN_ATTEMPTS = 10
 LOGIN_LOCKOUT_TTL = 900
-_WS_TOKEN_TTL = 4 * 3600  # 4 hours — survives reconnects for a full game session
+# Four hours: long enough for a whole teaching session, and expiry is the only
+# way these tokens end. There is deliberately no revocation on game end, because
+# reconnecting to a finished game to see the final leaderboard is a supported
+# flow; the token grants nothing else once the session leaves the question
+# state, since submitting an answer is refused outside it.
+_WS_TOKEN_TTL = 4 * 3600
 
 _WS_TOKEN_KEY = "ws_token:{}"
 _BLACKLIST_KEY = "blacklist:refresh:{}"
@@ -38,11 +43,6 @@ async def verify_ws_token(token: str) -> str | None:
     client = get_redis_client()
     value: str | None = await client.get(_WS_TOKEN_KEY.format(token))
     return value
-
-
-async def revoke_ws_token(token: str) -> None:
-    client = get_redis_client()
-    await client.delete(_WS_TOKEN_KEY.format(token))
 
 
 def _login_attempts_key(email: str) -> str:
